@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+python-pptx
+matplotlib
+Pillow
+numpy
