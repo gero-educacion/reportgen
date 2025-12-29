@@ -1,34 +1,42 @@
-from pptx import Presentation
-from pptx.util import Inches, Pt
-from PIL import Image
-import os
-from multiprocessing import Pool, cpu_count
-import json
-import matplotlib
-import matplotlib.pyplot as plt
-from io import BytesIO
-import numpy as np
-from multiprocessing import Semaphore
-from pathlib import Path
-matplotlib.use("Agg")
-import sys
 import logging
-import time
-import shutil
 from pptx import Presentation
 from pathlib import Path
-import os
-import logging
 
 log = logging.getLogger(__name__)
 
 def determine_template(student: dict, assets_dir: Path) -> Path:
+    log.info("determining template...")
     rol = student.get("Rol")
 
     if rol in ("counseling", "compass-directo"):
-        return assets_dir / "Template_Autoconocimiento 2.0 (counseling).pptx"
+        template_estudiante = assets_dir / "Template_Autoconocimiento 2.0 (counseling).pptx"
+        template_padres = assets_dir / "Template_Autoconocimiento 2.0 (Padres - Counseling).pptx"
+        return [
+            ("estudiante", template_estudiante), 
+            ("padres", template_padres)
+        ]
+    elif rol == "Rojo":
+        template_estudiante = assets_dir / "CCR_EN BOXES.pptx"
+        return [
+            ("ccr_rojo", template_estudiante)
+        ]
+    elif rol == "Amarillo":
+        template_estudiante = assets_dir / "CCR_CALENTANDO MOTORES.pptx"
+        return [
+            ("ccr_amarillo", template_estudiante)
+        ]
+    elif rol == "Verde":
+        template_estudiante = assets_dir / "CCR_A TODA MARCHA.pptx"
+        return [
+            ("ccr_verde", template_estudiante)
+        ]
     else:
-        return assets_dir / "Template_Autoconocimiento 2.0 (completo).pptx"
+        template_estudiante = assets_dir / "Template_Autoconocimiento 2.0 (completo).pptx"
+        template_padres = assets_dir / "Template_Autoconocimiento 2.0 (PADRES).pptx"
+        return [
+            ("estudiante", template_estudiante), 
+            ("padres", template_padres)
+        ]
 
 def map_placeholders(student: dict) -> dict:
     mapped = {}
@@ -45,9 +53,9 @@ def generate_report(
     template_path: Path,
     output_pptx_path: Path,
 ):
-
-    log.info("Generating PPTX")
+    log.info("Generating PPTX...")
     prs = Presentation(template_path)
+    log.info("The chart exists: ", pie_chart_path)
 
     placeholders = map_placeholders(student)
 

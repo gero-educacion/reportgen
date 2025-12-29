@@ -37,6 +37,7 @@ def generate_graph(student: dict, output_path: Path) -> Path:
     Generates a Holland pie chart for ONE student
     and saves it to output_path.
     """
+    print("generating the chart...")
 
     porcentajes = _validate_holland_data(student)
 
@@ -106,4 +107,5 @@ def generate_graph(student: dict, output_path: Path) -> Path:
     if output_path.stat().st_size < 10_000:
         raise RuntimeError("Generated chart image is too small")
 
+    print("chart generated ✅: ", output_path)
     return output_path

@@ -1,2 +1,4 @@
 .DS_Store
 outputs/
+secrets/
+credentials.env

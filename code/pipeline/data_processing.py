@@ -1,11 +1,6 @@
 from pathlib import Path
 import copy
 
-
-# ---------------------------
-# IMAGE MAPS (FLAT ASSETS)
-# ---------------------------
-
 def _presence_image(level: str, assets_dir: Path) -> dict:
     level = (level or "").upper()
 
@@ -47,6 +42,7 @@ def process_student_data(student: dict, assets_dir: Path) -> dict:
     Enriches ONE student dict with image placeholders.
     Returns a NEW dict (does not mutate input).
     """
+    print("processing data...")
 
     result = copy.deepcopy(student)
 
@@ -77,5 +73,6 @@ def process_student_data(student: dict, assets_dir: Path) -> dict:
             continue
 
         result[ae_url_key] = _ae_bar_image(value, assets_dir)
-
+    
+    print("data processed...", result["Nombre y Apellido"])
     return result

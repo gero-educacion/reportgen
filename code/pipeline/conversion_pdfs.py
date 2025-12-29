@@ -57,7 +57,6 @@ def convert_to_pdf(pptx_path: Path, pdf_path: Path) -> Path:
     """
     Converts ONE PPTX file to ONE PDF file using LibreOffice.
     """
-
     if not pptx_path.exists():
         raise FileNotFoundError(pptx_path)
 
@@ -86,5 +85,4 @@ def convert_to_pdf(pptx_path: Path, pdf_path: Path) -> Path:
     # Rename/move to desired pdf_path if needed
     if generated_pdf != pdf_path:
         generated_pdf.replace(pdf_path)
-
     return pdf_path
