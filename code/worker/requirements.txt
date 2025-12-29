@@ -1,0 +1,12 @@
+fastapi
+health
+sendgrid>=6.11.0
+uvicorn
+python-pptx
+matplotlib
+Pillow
+numpy
+google-api-python-client
+google-auth
+google-auth-httplib2
+google-auth-oauthlib
