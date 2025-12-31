@@ -84,7 +84,7 @@ def send_report_email(
     )
 
 
-    sg = SendGridAPIClient(os.environ["SENDGRID_API_KEY"])
+    sg = SendGridAPIClient(os.environ.get('SENDGRID_API_KEY'))
 
     html_content = build_report_email_html(
         name=student["Nombre y Apellido"],

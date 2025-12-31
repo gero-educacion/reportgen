@@ -1,4 +1,5 @@
 from google.oauth2 import service_account
+import google.auth
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 import os
@@ -13,10 +14,7 @@ logger = logging.getLogger(__name__)
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 def get_drive_service():
-    creds = service_account.Credentials.from_service_account_file(
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"],
-        scopes=SCOPES,
-    )
+    creds, _ = google.auth.default(scopes=SCOPES)
     return build("drive", "v3", credentials=creds)
 
 

@@ -1,5 +1,6 @@
 .DS_Store
 outputs/
 secrets/
-credentials.env
 *.json
+deploy.sh
+deploy.ps1

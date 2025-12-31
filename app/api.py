@@ -8,11 +8,20 @@ import logging
 import re
 import unicodedata
 
-from pipeline.run_student_pipeline import run_student_pipeline
-from pipeline.email_sender import send_report_email
-from pipeline.drive_uploader import upload_pdf_to_drive
-from pipeline.siteground_sender import send_report_to_siteground
+from app.pipeline.run_student_pipeline import run_student_pipeline
+from app.pipeline.email_sender import send_report_email
+from app.pipeline.drive_uploader import upload_pdf_to_drive
+from app.pipeline.siteground_sender import send_report_to_siteground
 
+print("🔥 /run endpoint ENTERED")
+
+print("ENV VARS SEEN:")
+for k in ["GOOGLE_APPLICATION_CREDENTIALS", "DRIVE_FOLDER_AUTO_EST"]:
+    print(f"  {k} =", os.environ.get(k))
+
+cred = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+print("CRED PATH =", cred)
+print("CRED EXISTS =", os.path.exists(cred) if cred else None)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,8 +42,10 @@ REPORT_TITLES = {
 app = FastAPI()
 
 APP_TMP_DIR = Path("/app/tmp/jobs")
+APP_TMP_DIR.mkdir(parents=True, exist_ok=True)
 
-logger.info("DALE PERRO LET'S FUCKING GO")
+
+logger.info("ok, let's go")
 
 def safe_filename(text: str) -> str:
     # normalize accents → ascii

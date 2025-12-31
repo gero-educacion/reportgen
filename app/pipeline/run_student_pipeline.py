@@ -1,8 +1,8 @@
 from pathlib import Path
-from .data_processing import process_student_data
-from .chartgen import generate_graph
-from .build_pptx import determine_template, generate_report
-from .conversion_pdfs import convert_to_pdf
+from app.pipeline.data_processing import process_student_data
+from app.pipeline.chartgen import generate_graph
+from app.pipeline.build_pptx import determine_template, generate_report
+from app.pipeline.conversion_pdfs import convert_to_pdf
 # from .email_sender import send_email
 
 PIPELINE_COMPLETO = {

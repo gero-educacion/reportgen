@@ -1,28 +1,19 @@
+version: "3.9"
+
 services:
   reportgen:
-    env_file:
-      - ./secrets/credentials.env
-    image: reportgen-worker:1.0
-    build:
-      context: .
-      dockerfile: code/worker/Dockerfile
+    build: .
     ports:
-      - "8000:8000"
+      - "8080:8080"
+
+    # 🔹 THIS reconnects the .env file
+    env_file:
+      - .env
+
+    # 🔹 Mount secrets + tmp
     volumes:
-      - ./code/worker:/app        
-      - ./code/pipeline:/app/pipeline
-      - ./assets:/app/assets
-      - ./tmp:/app/tmp
-      - ./secrets/beemoviescript.json:/secrets/beemoviescript.json:ro
-    environment:
-      - SENDGRID_API_KEY=${SENDGRID_API_KEY}
-      - SENDGRID_FROM=juan@geroeducacion.com
-      - GOOGLE_APPLICATION_CREDENTIALS=/secrets/beemoviescript.json
-      - DRIVE_FOLDER_CCR=1v_33KgifoGgcRTCmlq3DWWk760D-iMGf
-      - DRIVE_FOLDER_AUTO_EST=1ScJtruZTNl0Z2gDfs8wg5jtPVB0Hh50V
-      - DRIVE_FOLDER_AUTO_PAD=1CPlW5-E5hp0pSvLxNYECak-CIceU35_4
-      - SITEGROUND_API_KEY=${SITEGROUND_API_KEY}
-      - SITEGROUND_ENDPOINT=https://staging2.geroeducacion.com/wp-json/reportes/v1/upload
+      - ./secrets:/secrets:ro
+      - ./tmp:/tmp
 
-
-
+    # (optional but recommended)
+    restart: unless-stopped
