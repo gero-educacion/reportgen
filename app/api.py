@@ -12,6 +12,8 @@ from app.pipeline.run_student_pipeline import run_student_pipeline
 from app.pipeline.email_sender import send_report_email
 from app.pipeline.drive_uploader import upload_pdf_to_drive
 from app.pipeline.siteground_sender import send_report_to_siteground
+from app.pipeline.sheets_logger import log_student_reports
+
 
 print("🔥 /run endpoint ENTERED")
 
@@ -94,7 +96,7 @@ def run_student(job: dict):
 
     try:
         if job_dir.exists():
-            pdf_paths = list(job_dir.glob("*report*.pdf"))
+            pdf_paths = [str(p) for p in job_dir.glob("*report*.pdf")]
             logger.info(pdf_paths)
             if pdf_paths:
                 send_report_email(
@@ -180,14 +182,34 @@ def run_student(job: dict):
                     f"⚠️ SiteGround failed for {report_type} (Drive link preserved)"
                 )
 
+        # 🆕 NUEVO: Loguear a Google Sheets
+        if email and drive_links:
+            try:
+                log_student_reports(
+                    email=email,
+                    drive_links=drive_links,
+                )
+            except Exception:
+                logger.exception("⚠️ Sheets logging failed (continuing anyway)")
+
         # solo mandamos el reporte del estudiante al estudiante
         email_pdfs = []
 
-        if "estudiante" in reports:
-            email_pdfs.append(reports["estudiante"])
+        # 1) Primary: collect from reports dict (any report type)
+        for v in reports.values():
+            if isinstance(v, str) and v.endswith(".pdf"):
+                email_pdfs.append(v)
+            elif isinstance(v, (list, tuple)):
+                for p in v:
+                    if isinstance(p, str) and p.endswith(".pdf"):
+                        email_pdfs.append(p)
 
-        if "padres" in reports:
-            email_pdfs.append(reports["padres"])
+        # 2) Fallback: discover PDFs in job_dir (like resend mechanic)
+        if not email_pdfs and job_dir.exists():
+            discovered = list(job_dir.glob("*report*.pdf"))
+            email_pdfs = [str(p) for p in discovered]
+
+        logger.info("email=%s pdf_count=%s pdfs=%s", email, len(email_pdfs), email_pdfs)
 
         if email_pdfs:
             send_report_email(
@@ -195,6 +217,9 @@ def run_student(job: dict):
                 pdf_paths=email_pdfs,
                 student=job,
             )
+        else:
+            logger.warning("No PDFs found to email. job_id=%s job_dir=%s reports_keys=%s",
+                           job_id, str(job_dir), list(reports.keys()))
 
         # respuesta exitosa para el AppsScript
         return {

@@ -31,6 +31,15 @@ def _validate_holland_data(student: dict) -> list[float]:
 
     return [v * 100 for v in values]
 
+def _label_extractor(student: dict) -> list[str]:
+    labels =[student["Holland 01"], 
+             student["Holland 02"],
+             student["Holland 03"],
+             student["Holland 04"], 
+             student["Holland 05"],
+             student["Holland 06"]
+            ]
+    return labels
 
 def generate_graph(student: dict, output_path: Path) -> Path:
     """
@@ -46,10 +55,7 @@ def generate_graph(student: dict, output_path: Path) -> Path:
         "#FFC665", "#8DBEB2", "#FEB58C"
     ]
 
-    labels = [
-        "SOCIAL", "ARTÍSTICO", "CONVENCIONAL",
-        "REALISTA", "EMPRENDEDOR", "INVESTIGATIVO"
-    ]
+    labels = _label_extractor(student)
 
     fig, ax = plt.subplots(figsize=(6, 6), facecolor="white")
     ax.set_aspect("equal")

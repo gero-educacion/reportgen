@@ -74,15 +74,21 @@ def send_report_email(
     Mandamos el mail al estudiante con el mail de povi (i'm sorry povi)
     '''
 
+    pdf_paths = [Path(p) for p in pdf_paths]
+
     print("sending the email...")
-    if not to_email or not pdf_paths:
+    if not to_email:
+        logger.warning("Skipping email: missing to_email")
+        return
+    
+    if not pdf_paths:
+        logger.warning("Skipping email: empty pdf_paths")
         return
     
     logger.info(
     f"SENDGRID_API_KEY present={ 'SENDGRID_API_KEY' in os.environ } "
     f"starts_with={os.environ.get('SENDGRID_API_KEY','')[:3]}"
     )
-
 
     sg = SendGridAPIClient(os.environ.get('SENDGRID_API_KEY'))
 
@@ -92,11 +98,13 @@ def send_report_email(
     )
 
     message = Mail(
-        from_email=os.environ["SENDGRID_FROM"],
+        from_email=(os.environ["SENDGRID_FROM"], "Juan de gero"),
         to_emails=to_email,
+        cc_emails="operaciones@geroeducacion.com",   
         subject="Tu reporte - Gero Educación",
         html_content=html_content,
     )
+    message.reply_to = "operaciones@geroeducacion.com"
 
     for pdf_path in pdf_paths:
         with open(pdf_path, "rb") as f:

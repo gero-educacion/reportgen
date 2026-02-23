@@ -30,6 +30,21 @@ def determine_template(student: dict, assets_dir: Path) -> Path:
         return [
             ("ccr_verde", template_estudiante)
         ]
+    elif rol == "autoconfianza":
+        template_estudiante = assets_dir / "autoconfianza.pptx"
+        return [
+            ("autoconfianza", template_estudiante)
+        ]
+    elif rol == "como decidir":
+        template_estudiante = assets_dir / "como_decidir.pptx"
+        return [
+            ("como decidir", template_estudiante)
+        ]
+    elif rol == "desempatador":
+        template_estudiante = assets_dir / "desempatador.pptx"
+        return [
+            ("desempatador", template_estudiante)
+        ]
     else:
         template_estudiante = assets_dir / "Template_Autoconocimiento 2.0 (completo).pptx"
         template_padres = assets_dir / "Template_Autoconocimiento 2.0 (PADRES).pptx"

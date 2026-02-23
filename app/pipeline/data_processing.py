@@ -8,9 +8,8 @@ def _presence_image(level: str, assets_dir: Path) -> dict:
         return {"image": str(assets_dir / "Presencia_ALTA.png")}
     elif level == "MEDIA":
         return {"image": str(assets_dir / "Presencia_MEDIA.png")}
-    else:
+    elif level == "BAJA":
         return {"image": str(assets_dir / "Presencia_BAJA.png")}
-
 
 def _ae_bar_image(value: float, assets_dir: Path) -> dict:
     thresholds = [
