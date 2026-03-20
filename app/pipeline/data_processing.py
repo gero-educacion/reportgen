@@ -63,7 +63,7 @@ def process_student_data(student: dict, assets_dir: Path) -> dict:
 
         if value in ("", None):
             result[ae_url_key] = ""
-            break
+            continue
 
         try:
             value = float(value)

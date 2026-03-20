@@ -90,17 +90,7 @@ def convert_to_pdf(pptx_path: Path, pdf_path: Path) -> Path:
     ]
 
     try:
-        subprocess.run(
-            [
-                soffice,
-                f"-env:UserInstallation={profile_uri}",
-                "--headless",
-                "--convert-to", "pdf",
-                str(pptx_path),
-                "--outdir", str(output_dir),
-            ],
-            check=True,
-        )
+        subprocess.run(cmd, check=True)
     finally: 
         shutil.rmtree(profile_dir, ignore_errors=True)
 
