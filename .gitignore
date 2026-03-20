@@ -4,4 +4,3 @@ secrets/
 *.json
 deploy.sh
 deploy.ps1
-.env

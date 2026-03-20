@@ -5,16 +5,21 @@ from googleapiclient.http import MediaFileUpload
 import os
 from pathlib import Path
 import logging
-
-import logging
+import json
 
 logger = logging.getLogger(__name__)
 
 
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 
+
 def get_drive_service():
-    creds, _ = google.auth.default(scopes=SCOPES)
+    creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON")
+    if creds_json:
+        info = json.loads(creds_json)
+        creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
+    else:
+        creds, _ = google.auth.default(scopes=SCOPES)
     return build("drive", "v3", credentials=creds)
 
 

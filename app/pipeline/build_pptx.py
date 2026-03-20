@@ -70,7 +70,6 @@ def generate_report(
 ):
     log.info("Generating PPTX...")
     prs = Presentation(template_path)
-    log.info("The chart exists: ", pie_chart_path)
 
     placeholders = map_placeholders(student)
 
@@ -119,6 +118,7 @@ def generate_report(
                                     )
                                 else:
                                     run.text = run.text.replace(key, val)
+                                    
 
                 # NUMERIC PLACEHOLDERS
                 elif isinstance(val, (int, float)):

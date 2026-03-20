@@ -12,8 +12,6 @@ from app.pipeline.run_student_pipeline import run_student_pipeline
 from app.pipeline.email_sender import send_report_email
 from app.pipeline.drive_uploader import upload_pdf_to_drive
 from app.pipeline.siteground_sender import send_report_to_siteground
-from app.pipeline.sheets_logger import log_student_reports
-
 
 print("🔥 /run endpoint ENTERED")
 
@@ -151,7 +149,7 @@ def run_student(job: dict):
             )
 
             safe_name = safe_filename(student_name)
-            filename = f"{safe_name}_{report_type}.pdf"
+            filename = f"{safe_name}_{report_type}_{student_id}.pdf"
 
             logger.info(f"⬆️ Uploading to Drive ({report_type})")
 
@@ -181,16 +179,6 @@ def run_student(job: dict):
                 logger.exception(
                     f"⚠️ SiteGround failed for {report_type} (Drive link preserved)"
                 )
-
-        # 🆕 NUEVO: Loguear a Google Sheets
-        if email and drive_links:
-            try:
-                log_student_reports(
-                    email=email,
-                    drive_links=drive_links,
-                )
-            except Exception:
-                logger.exception("⚠️ Sheets logging failed (continuing anyway)")
 
         # solo mandamos el reporte del estudiante al estudiante
         email_pdfs = []

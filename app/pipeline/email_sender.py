@@ -100,7 +100,6 @@ def send_report_email(
     message = Mail(
         from_email=(os.environ["SENDGRID_FROM"], "Juan de gero"),
         to_emails=to_email,
-        cc_emails="operaciones@geroeducacion.com",   
         subject="Tu reporte - Gero Educación",
         html_content=html_content,
     )

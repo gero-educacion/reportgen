@@ -5,3 +5,5 @@ __pycache__
 credentials.env
 tmp/
 node_modules
+.env
+.dockerignore
