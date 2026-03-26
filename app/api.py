@@ -1,16 +1,22 @@
 from fastapi import FastAPI, HTTPException, BackgroundTasks
+from datetime import datetime, timezone
 from pathlib import Path
 import json
+import traceback
 import os
 import logging
 import re
+import shutil
 import unicodedata
-import requests
+import time
 
 from app.pipeline.run_student_pipeline import run_student_pipeline
 from app.pipeline.email_sender import send_report_email
-from app.pipeline.drive_uploader import upload_pdf_to_drive
+from app.pipeline.drive_uploader import upload_pdf_to_drive, upsert_json_to_drive
+from app.pipeline.drive_downloader import download_drive_file
 from app.pipeline.siteground_sender import send_report_to_siteground
+from app.pipeline.sheets_updater import update_student_status
+from app.pipeline.student_historic import get_all_links, upsert_student
 
 logging.basicConfig(
     level=logging.INFO,
@@ -19,11 +25,19 @@ logging.basicConfig(
 logger = logging.getLogger("reportgen")
 
 REPORT_TITLES = {
-    "estudiante": 'Reporte "Autoconocimiento"',
-    "padres": 'Reporte "Autoconocimiento versión padres"',
-    "ccr_rojo": "CCR EN BOXES",
+    "estudiante":   'Reporte "Autoconocimiento"',
+    "padres":       'Reporte "Autoconocimiento versión padres"',
+    "ccr_rojo":     "CCR EN BOXES",
     "ccr_amarillo": "CCR CALENTANDO MOTORES",
-    "ccr_verde": "CCR A TODA MARCHA",
+    "ccr_verde":    "CCR A TODA MARCHA",
+}
+
+REPORT_FILENAMES = {
+    "estudiante":   "Reporte_Autoconocimiento.pdf",
+    "padres":       "Reporte_Autoconocimiento_Padres.pdf",
+    "ccr_rojo":     "CCR_En_Boxes.pdf",
+    "ccr_amarillo": "CCR_Calentando_Motores.pdf",
+    "ccr_verde":    "CCR_A_Toda_Marcha.pdf",
 }
 
 app = FastAPI()
@@ -31,191 +45,368 @@ app = FastAPI()
 APP_TMP_DIR = Path("/app/tmp/jobs")
 APP_TMP_DIR.mkdir(parents=True, exist_ok=True)
 
+LOCK_FILENAME = ".lock"
+
 logger.info("ok, let's go")
 
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def safe_filename(text: str) -> str:
     text = unicodedata.normalize("NFKD", text)
     text = text.encode("ascii", "ignore").decode("ascii")
     text = text.lower().strip()
     text = re.sub(r"\s+", "_", text)
-    text = re.sub(r"[^a-z0-9_\-]", "", text)
+    text = re.sub(r"[^a-z0-9_\-\.]", "", text)
     return text
 
 
-def post_process(job: dict, reports: dict, job_dir: Path, flags: dict):
-    """
-    Runs in the background after the PDF is ready.
-    Uploads to Drive, sends to SiteGround, sends email.
-    POSTs a status report to the AppsScript webhook when done.
-    """
-    student_id = job.get("student_id")
-    email = job.get("Email") or job.get("email")
-    upload_drive = flags.get("upload_drive", True)
-    send_siteground = flags.get("send_siteground", True)
-    send_email = flags.get("send_email", True)
+def _acquire_lock(job_dir: Path, timeout: int = 90) -> bool:
+    lock_path = job_dir / LOCK_FILENAME
+    deadline  = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode())
+            os.close(fd)
+            return True
+        except FileExistsError:
+            time.sleep(1)
+    return False
 
-    status = {
-        "student_id": student_id,
-        "nombre": job.get("Nombre y Apellido"),
-        "email": email,
-        "drive": {},        # { report_type: { ok: bool, link: str, error: str } }
-        "siteground": {},   # { report_type: { ok: bool, error: str } }
-        "email_sent": { "ok": False, "error": None },
-    }
 
-    # ── DRIVE UPLOAD ──────────────────────────────────────────────
-    drive_links = {}
+def _release_lock(job_dir: Path):
+    try:
+        (job_dir / LOCK_FILENAME).unlink(missing_ok=True)
+    except Exception:
+        pass
 
-    for report_type, pdf_path in reports.items():
-        post_title = REPORT_TITLES.get(report_type)
-        if not post_title:
-            continue
 
-        if report_type.startswith("ccr"):
-            folder_id = os.environ["DRIVE_FOLDER_CCR"]
-        elif report_type == "estudiante":
-            folder_id = os.environ["DRIVE_FOLDER_AUTO_EST"]
-        elif report_type == "padres":
-            folder_id = os.environ["DRIVE_FOLDER_AUTO_PAD"]
-        else:
-            continue
+def _now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
-        if not upload_drive:
-            status["drive"][report_type] = {"ok": False, "link": None, "error": "skipped by flag"}
-            continue
 
-        student_name = (
-            job.get("Nombre y Apellido")
-            or job.get("Nombre")
-            or job.get("nombre")
-            or student_id
+# ---------------------------------------------------------------------------
+# Background task — runs after 200 OK is returned
+# ---------------------------------------------------------------------------
+
+def _post_pipeline_tasks(
+    job: dict,
+    student_id: str,
+    email: str,
+    name: str,
+    job_dir: Path,
+    pdf_paths: list[Path],
+    report_types: list[str],
+    flag_send_email: bool,
+    flag_upload_drive: bool,
+    flag_post_siteground: bool,
+    flag_upload_historic: bool,
+):
+    reports = dict(zip(report_types, pdf_paths))
+    drive_links      = {}
+    input_json_link  = ""
+    email_sent       = "no"
+    drive_uploaded   = "no"
+    sg_uploaded      = "no"
+
+    # ----------------------------------------------------------
+    # INPUT JSON → Drive
+    # ----------------------------------------------------------
+    inputs_folder_id = os.environ.get("DRIVE_FOLDER_INPUTS")
+    if inputs_folder_id and flag_upload_historic:
+        try:
+            safe_email  = safe_filename(email or "no_email")
+            input_filename = f"{safe_email}_{student_id}_input.json"
+            input_json_link = upsert_json_to_drive(
+                data=job,
+                filename=input_filename,
+                folder_id=inputs_folder_id,
+            )
+            logger.info("📦 Input JSON uploaded: %s", input_filename)
+        except Exception:
+            logger.exception("⚠️  Failed to upload input JSON (non-fatal)")
+
+    # ----------------------------------------------------------
+    # DRIVE UPLOAD
+    # ----------------------------------------------------------
+    if flag_upload_drive:
+        for report_type, pdf_path in reports.items():
+            post_title = REPORT_TITLES.get(report_type)
+            if not post_title:
+                continue
+
+            if report_type.startswith("ccr"):
+                folder_id = os.environ.get("DRIVE_FOLDER_CCR")
+            elif report_type == "estudiante":
+                folder_id = os.environ.get("DRIVE_FOLDER_AUTO_EST")
+            elif report_type == "padres":
+                folder_id = os.environ.get("DRIVE_FOLDER_AUTO_PAD")
+            else:
+                continue
+
+            filename = f"{safe_filename(name)}_{report_type}_{student_id}.pdf"
+            try:
+                drive_link = upload_pdf_to_drive(
+                    pdf_path=pdf_path,
+                    target_folder_id=folder_id,
+                    filename=filename,
+                )
+                drive_links[report_type] = drive_link
+                logger.info("⬆️  Uploaded %s to Drive", report_type)
+            except Exception:
+                logger.exception("⚠️  Drive upload failed for %s", report_type)
+
+        drive_uploaded = "yes" if drive_links else "no"
+    else:
+        logger.info("⏭️  Drive upload skipped (flag=False)")
+        drive_uploaded = "skipped"
+
+    # ----------------------------------------------------------
+    # SITEGROUND
+    # ----------------------------------------------------------
+    if flag_post_siteground and drive_links:
+        sg_successes = 0
+        for report_type, drive_link in drive_links.items():
+            post_title = REPORT_TITLES.get(report_type)
+            if not post_title:
+                continue
+            try:
+                send_report_to_siteground(
+                    email=email,
+                    drive_link=drive_link,
+                    post_title=post_title,
+                )
+                sg_successes += 1
+                logger.info("🌐 SiteGround ok: %s", report_type)
+            except Exception:
+                logger.exception("⚠️  SiteGround failed for %s", report_type)
+        sg_uploaded = "yes" if sg_successes > 0 else "no"
+    elif not flag_post_siteground:
+        logger.info("⏭️  SiteGround skipped (flag=False)")
+        sg_uploaded = "skipped"
+
+    # ----------------------------------------------------------
+    # HISTORIC
+    # ----------------------------------------------------------
+    if drive_links:
+        upsert_student(
+            email=email,
+            student_id=student_id,
+            name=name,
+            drive_links=drive_links,
         )
-        safe_name = safe_filename(student_name)
-        filename = f"{safe_name}_{report_type}_{student_id}.pdf"
 
-        try:
-            logger.info(f"⬆️ Uploading to Drive ({report_type})")
-            link = upload_pdf_to_drive(
-                pdf_path=pdf_path,
-                target_folder_id=folder_id,
-                filename=filename,
-            )
-            drive_links[report_type] = link
-            status["drive"][report_type] = {"ok": True, "link": link, "error": None}
-        except Exception as e:
-            logger.exception(f"❌ Drive upload failed for {report_type}")
-            status["drive"][report_type] = {"ok": False, "link": None, "error": str(e)}
-
-    # ── SITEGROUND ────────────────────────────────────────────────
-    for report_type, drive_link in drive_links.items():
-        post_title = REPORT_TITLES.get(report_type)
-        if not post_title:
-            continue
-
-        if not send_siteground:
-            status["siteground"][report_type] = {"ok": False, "error": "skipped by flag"}
-            continue
-
-        try:
-            logger.info(f"🌐 Sending {report_type} to SiteGround")
-            send_report_to_siteground(
-                email=email,
-                drive_link=drive_link,
-                post_title=post_title,
-            )
-            status["siteground"][report_type] = {"ok": True, "error": None}
-        except Exception as e:
-            logger.exception(f"⚠️ SiteGround failed for {report_type}")
-            status["siteground"][report_type] = {"ok": False, "error": str(e)}
-
-    # ── EMAIL ─────────────────────────────────────────────────────
-    email_pdfs = [str(v) for v in reports.values() if str(v).endswith(".pdf")]
-
-    if not send_email:
-        status["email_sent"] = {"ok": False, "error": "skipped by flag"}
-    elif not email_pdfs:
-        status["email_sent"] = {"ok": False, "error": "no PDFs found"}
+    # ----------------------------------------------------------
+    # EMAIL
+    # ----------------------------------------------------------
+    if flag_send_email:
+        email_pdfs = [p for p in pdf_paths if Path(p).exists()]
+        if email and email_pdfs:
+            try:
+                send_report_email(
+                    to_email=email,
+                    pdf_paths=email_pdfs,
+                    student=job,
+                )
+                email_sent = "yes"
+            except Exception:
+                logger.exception("⚠️  Email failed")
+                email_sent = "no"
+        else:
+            logger.warning("No email sent — email=%s pdf_count=%s", email, len(email_pdfs))
     else:
-        try:
-            send_report_email(to_email=email, pdf_paths=email_pdfs, student=job)
-            status["email_sent"] = {"ok": True, "error": None}
-        except Exception as e:
-            logger.exception("❌ Email failed")
-            status["email_sent"] = {"ok": False, "error": str(e)}
+        logger.info("⏭️  Email skipped (flag=False)")
+        email_sent = "skipped"
 
-    # ── SAVE STATUS ───────────────────────────────────────────────
-    with open(job_dir / "status.json", "w", encoding="utf-8") as f:
-        json.dump(status, f, indent=2, ensure_ascii=False)
+    # ----------------------------------------------------------
+    # STATUS SHEET
+    # ----------------------------------------------------------
+    update_student_status(
+        student_id, job,
+        status="ok",
+        email_sent=email_sent,
+        drive_uploaded=drive_uploaded,
+        siteground_uploaded=sg_uploaded,
+        drive_links=drive_links,
+        input_json_link=input_json_link,
+    )
 
-    # ── PING APPSSCRIPT WEBHOOK ───────────────────────────────────
-    webhook_url = os.environ.get("APPSSCRIPT_WEBHOOK_URL")
-    if webhook_url:
-        try:
-            logger.info("📡 Pinging AppsScript webhook")
-            requests.post(webhook_url, json=status, timeout=10)
-            logger.info("✅ Webhook delivered")
-        except Exception as e:
-            logger.exception("⚠️ Webhook delivery failed")
-    else:
-        logger.warning("No APPSSCRIPT_WEBHOOK_URL set, skipping webhook")
+    logger.info("✅ Background tasks complete for %s", student_id)
 
+
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
 
 @app.get("/health")
 def health():
     return {
-        "pipeline_exists": (Path("/app/pipeline")).exists(),
-        "assets_exists": (Path("/app/assets")).exists(),
-        "tmp_exists": (Path("/app/tmp")).exists(),
+        "pipeline_exists": Path("/app/app/pipeline").exists(),
+        "assets_exists":   Path("/app/assets").exists(),
+        "tmp_exists":      Path("/app/tmp").exists(),
+        "data_exists":     Path("/app/data").exists(),
     }
-
-
-@app.get("/status/{job_id}")
-def get_status(job_id: str):
-    status_file = APP_TMP_DIR / job_id / "status.json"
-    if not status_file.exists():
-        return {"status": "processing"}
-    with open(status_file) as f:
-        return json.load(f)
 
 
 @app.post("/run")
 def run_student(job: dict, background_tasks: BackgroundTasks):
     student_id = job.get("student_id")
-    job_id = job.get("job_id") or student_id
+    job_id     = job.get("job_id") or student_id
 
     if not student_id or not job_id:
         raise HTTPException(status_code=400, detail="Missing student_id or job_id")
 
-    job_dir = APP_TMP_DIR / job_id
-    email = job.get("Email") or job.get("email")
+    flag_send_email      = job.get("send_email",      True)
+    flag_upload_drive    = job.get("upload_drive",    True)
+    flag_post_siteground = job.get("post_siteground", True)
+    flag_force_rerun     = job.get("force_rerun",     False)
+    flag_upload_historic = job.get("upload_historic", True)
 
-    flags = job.get("flags", {})
+    email = job.get("Email") or job.get("email")
+    name  = (
+        job.get("Nombre y Apellido")
+        or job.get("Nombre")
+        or job.get("nombre")
+        or student_id
+    )
+
+    job_dir = APP_TMP_DIR / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+
+    # ------------------------------------------------------------------
+    # FALLBACK — check students_historic.json
+    # ------------------------------------------------------------------
+    if not flag_force_rerun and email:
+        historic_links = get_all_links(email)
+
+        if historic_links:
+            logger.info("📖 Historic record found for %s", email)
+
+            if flag_send_email:
+                downloaded_pdfs: list[Path] = []
+                failed_types:    list[str]  = []
+
+                for report_type, drive_link in historic_links.items():
+                    filename = REPORT_FILENAMES.get(report_type, f"{report_type}.pdf")
+                    try:
+                        tmp_pdf = download_drive_file(drive_link, filename)
+                        downloaded_pdfs.append(tmp_pdf)
+                    except FileNotFoundError:
+                        logger.warning("⚠️  Drive file missing for %s — will recompute", report_type)
+                        failed_types.append(report_type)
+                    except Exception:
+                        logger.exception("⚠️  Download error for %s — will recompute", report_type)
+                        failed_types.append(report_type)
+
+                if failed_types:
+                    logger.warning("🔁 Recomputing — missing: %s", failed_types)
+                    update_student_status(
+                        student_id, job,
+                        status="recomputed",
+                        error_msg=f"Drive files missing, recomputed: {', '.join(failed_types)}",
+                    )
+                    for p in downloaded_pdfs:
+                        p.unlink(missing_ok=True)
+                else:
+                    background_tasks.add_task(
+                        _send_resent_email,
+                        job, student_id, email,
+                        downloaded_pdfs, historic_links,
+                    )
+                    return {
+                        "status":  "ok (resent — background)",
+                        "job_id":  job_id,
+                        "sources": list(historic_links.keys()),
+                    }
+
+    # ------------------------------------------------------------------
+    # LOCK
+    # ------------------------------------------------------------------
+    if not _acquire_lock(job_dir, timeout=90):
+        raise HTTPException(
+            status_code=409,
+            detail="Another request is already processing this student.",
+        )
 
     try:
-        job_dir.mkdir(parents=True, exist_ok=True)
-
         with open(job_dir / "input.json", "w", encoding="utf-8") as f:
             json.dump(job, f, indent=2, ensure_ascii=False)
 
-        logger.info("⚙️ Starting run_student_pipeline")
+        # ----------------------------------------------------------
+        # PIPELINE  (blocking — LibreOffice needs this)
+        # ----------------------------------------------------------
+        logger.info("⚙️  Starting pipeline | job_id=%s", job_id)
         pdf_paths, report_types = run_student_pipeline(job, job_dir)
+        logger.info("📄 PDFs done: %s", report_types)
 
-        logger.info(f"📄 report_types={report_types} pdf_paths={[str(p) for p in pdf_paths]}")
-
-        reports = dict(zip(report_types, pdf_paths))
-
-        # ✅ PDF is ready — return immediately to AppsScript
-        background_tasks.add_task(post_process, job, reports, job_dir, flags)
+        # ----------------------------------------------------------
+        # Hand off everything else to background and return immediately
+        # ----------------------------------------------------------
+        background_tasks.add_task(
+            _post_pipeline_tasks,
+            job, student_id, email, name,
+            job_dir, pdf_paths, report_types,
+            flag_send_email, flag_upload_drive,
+            flag_post_siteground, flag_upload_historic,
+        )
 
         return {
-            "status": "ok",
-            "job_id": job_id,
+            "status":        "ok",
+            "job_id":        job_id,
             "pdf_generated": report_types,
         }
 
     except Exception as e:
         logger.exception("💥 Unhandled exception in /run")
+
+        update_student_status(
+            student_id, job,
+            status="error",
+            error_msg=str(e),
+        )
+
         with open(job_dir / "error.txt", "w", encoding="utf-8") as f:
-            f.write(str(e))
-        raise HTTPException(status_code=500, detail="Internal error while generating report")
+            f.write(traceback.format_exc())
+
+        raise HTTPException(
+            status_code=500,
+            detail="Internal error while generating report",
+        )
+
+    finally:
+        _release_lock(job_dir)
+
+
+def _send_resent_email(
+    job: dict,
+    student_id: str,
+    email: str,
+    downloaded_pdfs: list[Path],
+    historic_links: dict,
+):
+    """Background task for resending from historic."""
+    try:
+        send_report_email(
+            to_email=email,
+            pdf_paths=downloaded_pdfs,
+            student=job,
+        )
+        update_student_status(
+            student_id, job,
+            status="resent",
+            email_sent="yes",
+            drive_uploaded="yes",
+            siteground_uploaded="skipped",
+            drive_links=historic_links,
+        )
+    except Exception:
+        logger.exception("⚠️  Resend email failed")
+    finally:
+        for p in downloaded_pdfs:
+            try:
+                shutil.rmtree(p.parent, ignore_errors=True)
+            except Exception:
+                pass

@@ -6,14 +6,12 @@ services:
     ports:
       - "8080:8080"
 
-    # 🔹 THIS reconnects the .env file
     env_file:
       - .env
 
-    # 🔹 Mount secrets + tmp
     volumes:
       - ./secrets:/secrets:ro
       - ./tmp:/tmp
+      - ./data:/app/data      # ← persistent historic + lock file
 
-    # (optional but recommended)
     restart: unless-stopped
