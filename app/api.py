@@ -384,7 +384,6 @@ def run_student(job: dict, background_tasks: BackgroundTasks):
     finally:
         _release_lock(job_dir)
 
-
 def _send_resent_email(
     job: dict,
     student_id: str,
