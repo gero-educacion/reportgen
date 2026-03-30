@@ -11,6 +11,7 @@ import unicodedata
 import time
 
 from app.pipeline.run_student_pipeline import run_student_pipeline
+from app.pipeline.build_pptx import determine_template
 from app.pipeline.email_sender import send_report_email
 from app.pipeline.drive_uploader import upload_pdf_to_drive, upsert_json_to_drive
 from app.pipeline.drive_downloader import download_drive_file
@@ -282,7 +283,11 @@ def run_student(job: dict, background_tasks: BackgroundTasks):
     if not flag_force_rerun and email:
         historic_links = get_all_links(email)
 
-        if historic_links:
+        # Only use historic if it covers the report types this job needs
+        expected_types = set(dict(determine_template(job, Path("/app/assets"))).keys())
+        available_types = set(historic_links.keys())
+
+        if historic_links and expected_types.issubset(available_types):
             logger.info("📖 Historic record found for %s", email)
 
             if flag_send_email:
