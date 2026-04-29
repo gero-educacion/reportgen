@@ -29,7 +29,7 @@ def determine_template(student: dict, assets_dir: Path) -> Path:
     elif rol == "desempatador":
         return [("desempatador",  assets_dir / "desempatador.pptx")]
     elif rol == "UTP":
-        return [("estudiante", assets_dir / "template_utp_alumno.pptx"),
+        return [("estudiante", assets_dir / "template_utp_alumnos.pptx"),
                 ("padres", assets_dir / "template_utp_padres.pptx")
             ]
     else:
