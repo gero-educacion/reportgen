@@ -54,16 +54,19 @@ REPORT_DESCRIPTIONS = {
 # ---------------------------------------------------------------------------
 # SFTP upload
 # ---------------------------------------------------------------------------
+import io
 
-def _get_sftp_client() -> tuple[paramiko.SSHClient, paramiko.SFTPClient]:
-    host     = os.environ["SG_SFTP_HOST"]
-    port     = int(os.environ.get("SG_SFTP_PORT", 18765))
-    user     = os.environ["SG_SFTP_USER"]
-    password = os.environ.get("SG_SFTP_PASSWORD")
+def _get_sftp_client():
+    host        = os.environ["SG_SFTP_HOST"]
+    port        = int(os.environ.get("SG_SFTP_PORT", 18765))
+    user        = os.environ["SG_SFTP_USER"]
+    private_key = os.environ["SG_SFTP_PRIVATE_KEY"]  # contents of siteground_key
+
+    pkey = paramiko.Ed25519Key.from_private_key(io.StringIO(private_key))
 
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    ssh.connect(hostname=host, port=port, username=user, password=password)
+    ssh.connect(hostname=host, port=port, username=user, pkey=pkey)
     sftp = ssh.open_sftp()
     return ssh, sftp
 
