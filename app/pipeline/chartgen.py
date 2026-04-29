@@ -50,16 +50,10 @@ def generate_graph(student: dict, output_path: Path) -> Path:
 
     porcentajes = _validate_holland_data(student)
 
-    if student["Rol"] == "UTP":
-        colores = [
-            "#b50d30", "#414141", "#fed3dc",
-            "#e2e2e2", "#e26881", "#989898"
-        ]
-    else: 
-        colores = [
-            "#60AD9D", "#FFCA43", "#F97930",
-            "#FFC665", "#8DBEB2", "#FEB58C"
-        ]
+    colores = [
+        "#60AD9D", "#FFCA43", "#F97930",
+        "#FFC665", "#8DBEB2", "#FEB58C"
+    ]
 
     labels = _label_extractor(student)
 
@@ -93,6 +87,71 @@ def generate_graph(student: dict, output_path: Path) -> Path:
 
     handles = [
         Patch(facecolor=c, edgecolor="black", linewidth=0.8)
+        for c in colores
+    ]
+
+    ax.legend(
+        handles,
+        labels,
+        loc="upper left",
+        bbox_to_anchor=(1.02, 1.02),
+        frameon=False,
+        fontsize=10
+    )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(
+        output_path,
+        format="png",
+        dpi=200,
+        bbox_inches="tight",
+        pad_inches=0.15
+    )
+
+    plt.close(fig)
+
+    if output_path.stat().st_size < 10_000:
+        raise RuntimeError("Generated chart image is too small")
+
+    print("chart generated ✅: ", output_path)
+    return output_path
+
+
+def generate_graph_utp(student: dict, output_path: Path) -> Path:
+    """
+    Generates a clean Holland pie chart for UTP students.
+    No shadow, no black borders, flat modern style.
+    """
+    print("generating UTP chart...")
+
+    porcentajes = _validate_holland_data(student)
+    labels = _label_extractor(student)
+
+    colores = [
+        "#b50d30", "#414141", "#fed3dc",
+        "#e2e2e2", "#e26881", "#989898"
+    ]
+
+    fig, ax = plt.subplots(figsize=(6, 6), facecolor="white")
+    ax.set_aspect("equal")
+    ax.axis("off")
+
+    wedges, texts, autotexts = ax.pie(
+        porcentajes,
+        colors=colores,
+        startangle=90,
+        counterclock=False,
+        autopct=lambda p: f"{p:.1f}%" if p > 0 else "",
+        pctdistance=0.65,
+        wedgeprops=dict(
+            edgecolor="white",   # bordures blanches au lieu de noires
+            linewidth=2,
+        ),
+        textprops=dict(color="black", fontsize=10, fontweight="bold")
+    )
+
+    handles = [
+        Patch(facecolor=c, edgecolor="none")
         for c in colores
     ]
 

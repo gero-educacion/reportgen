@@ -1,6 +1,6 @@
 from pathlib import Path
 from app.pipeline.data_processing import process_student_data
-from app.pipeline.chartgen import generate_graph
+from app.pipeline.chartgen import generate_graph, generate_graph_utp
 from app.pipeline.build_pptx import determine_template, generate_report
 from app.pipeline.conversion_pdfs import convert_to_pdf
 # from .email_sender import send_email
@@ -36,8 +36,13 @@ def run_student_pipeline(job: dict, job_dir: Path):
         print("they requiere a complete pipeline")
         student = process_student_data(job, assets_dir)
 
-        chart_path = job_dir / "chart.png"
-        generate_graph(student, chart_path)
+        if rol == "UTP":
+            chart_path = job_dir / "chart.png"
+            generate_graph_utp(student, chart_path)
+            
+        else:
+            chart_path = job_dir / "chart.png"
+            generate_graph(student, chart_path)
 
     # flujo de chill para los del CCR
     else:
