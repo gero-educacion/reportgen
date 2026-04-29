@@ -317,6 +317,7 @@ def run_student(job: dict, background_tasks: BackgroundTasks):
         or job.get("Nombre")
         or job.get("nombre")
         or student_id
+        or job.get("nombre_estudiante")
     )
 
     job_dir = APP_TMP_DIR / job_id
