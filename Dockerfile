@@ -8,8 +8,13 @@ RUN apt-get update && apt-get install -y \
     libreoffice-writer \
     fonts-dejavu \
     fonts-liberation \
+    fontconfig \
     curl \
     && rm -rf /var/lib/apt/lists/*
+
+# Custom fonts (Formular + TT Squares Black)
+COPY assets/fonts/ /usr/share/fonts/custom/
+RUN fc-cache -fv
 
 # Matplotlib cache location (must be writable)
 ENV MPLCONFIGDIR=/app/.mplconfig

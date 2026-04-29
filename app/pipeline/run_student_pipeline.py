@@ -9,6 +9,7 @@ PIPELINE_COMPLETO = {
     "counseling",
     "compass-directo",
     "gs_actividades",
+    "UTP",
 }
 
 def run_student_pipeline(job: dict, job_dir: Path):
