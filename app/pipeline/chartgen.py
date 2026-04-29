@@ -50,10 +50,16 @@ def generate_graph(student: dict, output_path: Path) -> Path:
 
     porcentajes = _validate_holland_data(student)
 
-    colores = [
-        "#60AD9D", "#FFCA43", "#F97930",
-        "#FFC665", "#8DBEB2", "#FEB58C"
-    ]
+    if student["Rol"] == "UTP":
+        colores = [
+            "#b50d30", "#414141", "#fed3dc",
+            "#e2e2e2", "#e26881", "#989898"
+        ]
+    else: 
+        colores = [
+            "#60AD9D", "#FFCA43", "#F97930",
+            "#FFC665", "#8DBEB2", "#FEB58C"
+        ]
 
     labels = _label_extractor(student)
 

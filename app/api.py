@@ -15,9 +15,10 @@ from app.pipeline.build_pptx import determine_template
 from app.pipeline.email_sender import send_report_email
 from app.pipeline.drive_uploader import upload_pdf_to_drive, upsert_json_to_drive
 from app.pipeline.drive_downloader import download_drive_file
-from app.pipeline.siteground_sender import send_report_to_siteground
+from app.pipeline.siteground_sender import send_report_to_siteground, upload_pdf_to_siteground
 from app.pipeline.sheets_updater import update_student_status
 from app.pipeline.student_historic import get_all_links, upsert_student
+from app.pipeline.db_writer import write_majors_to_db, post_utp_payload
 
 logging.basicConfig(
     level=logging.INFO,
@@ -40,6 +41,9 @@ REPORT_FILENAMES = {
     "ccr_amarillo": "CCR_Calentando_Motores.pdf",
     "ccr_verde":    "CCR_A_Toda_Marcha.pdf",
 }
+
+# Roles that get files hosted on SiteGround instead of Drive
+UTP_ROLES = {"UTP"}
 
 app = FastAPI()
 
@@ -106,12 +110,24 @@ def _post_pipeline_tasks(
     flag_post_siteground: bool,
     flag_upload_historic: bool,
 ):
+    rol = job.get("Rol", "")
+    is_utp = rol in UTP_ROLES
+
     reports = dict(zip(report_types, pdf_paths))
     drive_links      = {}
+    sg_file_links    = {}   # SiteGround file hosting links (UTP)
     input_json_link  = ""
     email_sent       = "no"
     drive_uploaded   = "no"
     sg_uploaded      = "no"
+
+    # ----------------------------------------------------------
+    # WRITE MAJORS TO DB  (all students that have carrera fields)
+    # ----------------------------------------------------------
+    try:
+        write_majors_to_db(job)
+    except Exception:
+        logger.exception("⚠️  write_majors_to_db failed (non-fatal)")
 
     # ----------------------------------------------------------
     # INPUT JSON → Drive
@@ -119,7 +135,7 @@ def _post_pipeline_tasks(
     inputs_folder_id = os.environ.get("DRIVE_FOLDER_INPUTS")
     if inputs_folder_id and flag_upload_historic:
         try:
-            safe_email  = safe_filename(email or "no_email")
+            safe_email     = safe_filename(email or "no_email")
             input_filename = f"{safe_email}_{student_id}_input.json"
             input_json_link = upsert_json_to_drive(
                 data=job,
@@ -131,66 +147,95 @@ def _post_pipeline_tasks(
             logger.exception("⚠️  Failed to upload input JSON (non-fatal)")
 
     # ----------------------------------------------------------
-    # DRIVE UPLOAD
+    # UTP BRANCH — upload PDFs to SiteGround filesystem
     # ----------------------------------------------------------
-    if flag_upload_drive:
+    if is_utp:
+        logger.info("🏫 UTP student — uploading PDFs to SiteGround filesystem")
         for report_type, pdf_path in reports.items():
-            post_title = REPORT_TITLES.get(report_type)
-            if not post_title:
-                continue
-
-            if report_type.startswith("ccr"):
-                folder_id = os.environ.get("DRIVE_FOLDER_CCR")
-            elif report_type == "estudiante":
-                folder_id = os.environ.get("DRIVE_FOLDER_AUTO_EST")
-            elif report_type == "padres":
-                folder_id = os.environ.get("DRIVE_FOLDER_AUTO_PAD")
-            else:
-                continue
-
             filename = f"{safe_filename(name)}_{report_type}_{student_id}.pdf"
             try:
-                drive_link = upload_pdf_to_drive(
-                    pdf_path=pdf_path,
-                    target_folder_id=folder_id,
-                    filename=filename,
-                )
-                drive_links[report_type] = drive_link
-                logger.info("⬆️  Uploaded %s to Drive", report_type)
+                public_url = upload_pdf_to_siteground(pdf_path, filename)
+                sg_file_links[report_type] = public_url
+                logger.info("⬆️  SiteGround file upload ok: %s → %s", report_type, public_url)
             except Exception:
-                logger.exception("⚠️  Drive upload failed for %s", report_type)
+                logger.exception("⚠️  SiteGround file upload failed for %s", report_type)
 
-        drive_uploaded = "yes" if drive_links else "no"
-    else:
-        logger.info("⏭️  Drive upload skipped (flag=False)")
-        drive_uploaded = "skipped"
-
-    # ----------------------------------------------------------
-    # SITEGROUND
-    # ----------------------------------------------------------
-    if flag_post_siteground and drive_links:
-        sg_successes = 0
-        for report_type, drive_link in drive_links.items():
-            post_title = REPORT_TITLES.get(report_type)
-            if not post_title:
-                continue
+        # Post UTP-specific payload to dedicated endpoint
+        if sg_file_links:
             try:
-                send_report_to_siteground(
-                    email=email,
-                    drive_link=drive_link,
-                    post_title=post_title,
+                post_utp_payload(
+                    student_id=student_id,
+                    student=job,
+                    report_links=sg_file_links,
                 )
-                sg_successes += 1
-                logger.info("🌐 SiteGround ok: %s", report_type)
             except Exception:
-                logger.exception("⚠️  SiteGround failed for %s", report_type)
-        sg_uploaded = "yes" if sg_successes > 0 else "no"
-    elif not flag_post_siteground:
-        logger.info("⏭️  SiteGround skipped (flag=False)")
-        sg_uploaded = "skipped"
+                logger.exception("⚠️  post_utp_payload failed (non-fatal)")
+
+        # For sheet tracking, treat sg_file_links as drive_links
+        drive_links    = sg_file_links
+        drive_uploaded = "yes (siteground)" if sg_file_links else "no"
+        sg_uploaded    = "skipped"          # siteground_sender not used for UTP
 
     # ----------------------------------------------------------
-    # HISTORIC
+    # STANDARD BRANCH — upload PDFs to Google Drive
+    # ----------------------------------------------------------
+    else:
+        if flag_upload_drive:
+            for report_type, pdf_path in reports.items():
+                post_title = REPORT_TITLES.get(report_type)
+                if not post_title:
+                    continue
+
+                if report_type.startswith("ccr"):
+                    folder_id = os.environ.get("DRIVE_FOLDER_CCR")
+                elif report_type == "estudiante":
+                    folder_id = os.environ.get("DRIVE_FOLDER_AUTO_EST")
+                elif report_type == "padres":
+                    folder_id = os.environ.get("DRIVE_FOLDER_AUTO_PAD")
+                else:
+                    continue
+
+                filename = f"{safe_filename(name)}_{report_type}_{student_id}.pdf"
+                try:
+                    drive_link = upload_pdf_to_drive(
+                        pdf_path=pdf_path,
+                        target_folder_id=folder_id,
+                        filename=filename,
+                    )
+                    drive_links[report_type] = drive_link
+                    logger.info("⬆️  Uploaded %s to Drive", report_type)
+                except Exception:
+                    logger.exception("⚠️  Drive upload failed for %s", report_type)
+
+            drive_uploaded = "yes" if drive_links else "no"
+        else:
+            logger.info("⏭️  Drive upload skipped (flag=False)")
+            drive_uploaded = "skipped"
+
+        # SiteGround notification (existing sender — posts link to WP)
+        if flag_post_siteground and drive_links:
+            sg_successes = 0
+            for report_type, drive_link in drive_links.items():
+                post_title = REPORT_TITLES.get(report_type)
+                if not post_title:
+                    continue
+                try:
+                    send_report_to_siteground(
+                        email=email,
+                        drive_link=drive_link,
+                        post_title=post_title,
+                    )
+                    sg_successes += 1
+                    logger.info("🌐 SiteGround ok: %s", report_type)
+                except Exception:
+                    logger.exception("⚠️  SiteGround failed for %s", report_type)
+            sg_uploaded = "yes" if sg_successes > 0 else "no"
+        elif not flag_post_siteground:
+            logger.info("⏭️  SiteGround skipped (flag=False)")
+            sg_uploaded = "skipped"
+
+    # ----------------------------------------------------------
+    # HISTORIC  (all students)
     # ----------------------------------------------------------
     if drive_links:
         upsert_student(
@@ -201,7 +246,7 @@ def _post_pipeline_tasks(
         )
 
     # ----------------------------------------------------------
-    # EMAIL
+    # EMAIL  (all students)
     # ----------------------------------------------------------
     if flag_send_email:
         email_pdfs = [p for p in pdf_paths if Path(p).exists()]
@@ -284,7 +329,7 @@ def run_student(job: dict, background_tasks: BackgroundTasks):
         historic_links = get_all_links(email)
 
         # Only use historic if it covers the report types this job needs
-        expected_types = set(dict(determine_template(job, Path("/app/assets"))).keys())
+        expected_types  = set(dict(determine_template(job, Path("/app/assets"))).keys())
         available_types = set(historic_links.keys())
 
         if historic_links and expected_types.issubset(available_types):
@@ -383,6 +428,7 @@ def run_student(job: dict, background_tasks: BackgroundTasks):
 
     finally:
         _release_lock(job_dir)
+
 
 def _send_resent_email(
     job: dict,

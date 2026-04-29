@@ -28,12 +28,15 @@ def determine_template(student: dict, assets_dir: Path) -> Path:
         return [("como decidir",  assets_dir / "como_decidir.pptx")]
     elif rol == "desempatador":
         return [("desempatador",  assets_dir / "desempatador.pptx")]
+    elif rol == "UTP":
+        return [("estudiante", assets_dir / "template_utp_alumno.pptx"),
+                ("padres", assets_dir / "template_utp_padres.pptx")
+            ]
     else:
         return [
             ("estudiante", assets_dir / "Template_Autoconocimiento 2.0 (completo).pptx"),
             ("padres",     assets_dir / "Template_Autoconocimiento 2.0 (PADRES).pptx"),
         ]
-
 
 def map_placeholders(student: dict) -> dict:
     return {f"<<{k}>>": v for k, v in student.items()}
