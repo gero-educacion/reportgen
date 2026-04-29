@@ -248,7 +248,7 @@ def _post_pipeline_tasks(
     # ----------------------------------------------------------
     # EMAIL  (all students)
     # ----------------------------------------------------------
-    if flag_send_email:
+    if flag_send_email and not is_utp:
         email_pdfs = [p for p in pdf_paths if Path(p).exists()]
         if email and email_pdfs:
             try:

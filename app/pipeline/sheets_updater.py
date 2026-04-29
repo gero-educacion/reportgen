@@ -128,7 +128,7 @@ def _build_row(
     error_msg: str,
 ) -> list:
     now   = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    name  = student.get("Nombre y Apellido", "")
+    name  = (student.get("Nombre y Apellido") or student.get("nombre_estudiante"))
     email = student.get("Email") or student.get("email", "")
     rol   = student.get("Rol", "")
     links = drive_links or {}

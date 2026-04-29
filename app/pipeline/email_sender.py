@@ -19,7 +19,7 @@ CC_ADDRESS = "operaciones@geroeducacion.com"
 
 
 def get_first_name(student):
-    full = (student["Nombre y Apellido"]).strip()
+    full = (student["Nombre y Apellido"] or student["nombre_estudiante"]).strip()
     return full.split(" ")[0] if full else ""
 
 
@@ -92,7 +92,7 @@ def send_report_email(
     sg = SendGridAPIClient(os.environ.get("SENDGRID_API_KEY"))
 
     html_content = build_report_email_html(
-        name=student["Nombre y Apellido"],
+        name=(student["Nombre y Apellido"] or student["nombre_estudiante"]),
         site_link="https://geroeducacion.com/iniciar-sesion/",
     )
 

@@ -73,5 +73,9 @@ def process_student_data(student: dict, assets_dir: Path) -> dict:
 
         result[ae_url_key] = _ae_bar_image(value, assets_dir)
     
-    print("data processed...", result["Nombre y Apellido"])
+    name = (
+        result["Nombre y Apellido"]
+        or result["nombre_estudiante"]
+    )
+    print("data processed...", name)
     return result

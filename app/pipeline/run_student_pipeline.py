@@ -20,7 +20,14 @@ def run_student_pipeline(job: dict, job_dir: Path):
     assets_dir = Path("/app/assets")
     rol = job.get("Rol")
 
-    print("Student's name is ", job.get("Nombre y Apellido"))
+    name  = (
+        job.get("Nombre y Apellido")
+        or job.get("Nombre")
+        or job.get("nombre")
+        or job.get("nombre_estudiante")
+    )
+
+    print("Student's name is ", name)
     print("their role is ", rol)
 
     # flujo completo para los de AC
