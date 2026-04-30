@@ -55,11 +55,9 @@ def _get_lead_id(email: str) -> str | None:
     Returns the lead_id string or None if not found.
     """
     sql = """
-        SELECT lead_id
-        FROM byw_tracking_algoritmo_AC
+        SELECT legajo
+        FROM byw_usuarios_habilitados
         WHERE LOWER(email) = LOWER(%s)
-        ORDER BY response_at DESC
-        LIMIT 1
     """
     try:
         conn = _get_connection()
