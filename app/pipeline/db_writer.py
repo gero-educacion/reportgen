@@ -199,12 +199,11 @@ def post_utp_payload(
         headers["Authorization"] = f"Bearer {api_key}"
 
     logger.info(
-        "📨 Posting UTP payload | leadId=%s | career1=%s | career2=%s | estudiante=%s | padres=%s",
+        "📨 Posting UTP payload | leadId=%s | career1=%s | career2=%s | estudiante=%s",
         lead_id,
         payload["career1"],
         payload["career2"],
         payload["resultsLink"],
-        payload["resultsLinkPadres"],
     )
 
     try:
