@@ -66,8 +66,8 @@ def _get_lead_id(email: str) -> str | None:
                 cur.execute(sql, (email,))
                 row = cur.fetchone()
         if row:
-            logger.info("✅ Found lead_id=%s for %s", row["lead_id"], email)
-            return str(row["lead_id"])
+            logger.info("✅ Found lead_id=%s for %s", row["legajo"], email)
+            return str(row["legajo"])
         else:
             logger.warning("⚠️  No lead_id found for email=%s", email)
             return None
