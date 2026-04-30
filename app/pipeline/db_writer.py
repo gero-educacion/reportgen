@@ -161,19 +161,20 @@ def post_utp_payload(
 ):
     """
     1. Looks up lead_id from byw_tracking_algoritmo_AC by email.
-    2. POSTs leadId + career1 + career2 + report links to UTP CRM endpoint.
+    2. POSTs leadId + career1 + career2 + resultsLink to UTP CRM endpoint.
     3. Captures validationId from the response and writes it back to the table.
     """
     endpoint = os.environ.get("UTP_ENDPOINT_URL", "").strip().strip('"')
     if not endpoint:
         logger.warning("UTP_ENDPOINT_URL not set — skipping")
         return
-
-    logger.info("📨 UTP endpoint: %s", endpoint)
-
-    email   = (student.get("Email") or student.get("email") or "").strip()
-    api_key = os.environ.get("UTP_API_KEY", "")
-
+ 
+    api_key = os.environ.get("UTP_API_KEY", "").strip()
+    if not api_key:
+        logger.warning("UTP_API_KEY not set — request will likely be rejected")
+ 
+    email = (student.get("Email") or student.get("email") or "").strip()
+ 
     # Look up lead_id — fall back to student_id if not found
     lead_id = _get_lead_id(email) if email else None
     if not lead_id:
@@ -182,39 +183,33 @@ def post_utp_payload(
 
     c1 = (student.get("CARRERA_01") or student.get("Carrera 01"))
     c2 = (student.get("CARRERA_02") or student.get("Carrera 02"))
-    
-
+ 
     payload = {
-        "leadId":            lead_id,
-        "career1":           c1,
-        "career2":           c2,
-        "resultsLink":       report_links.get("estudiante", ""),
+        "leadId":      lead_id,
+        "career1":     c1,
+        "career2":     c2,
+        "resultsLink": report_links.get("estudiante", ""),
     }
-
+ 
     headers = {
         "Content-Type": "application/json",
-        "Accept":       "application/json",
+        "x-api-key":    api_key,
     }
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
+ 
     logger.info(
-        "📨 Posting UTP payload | leadId=%s | career1=%s | career2=%s | estudiante=%s",
-        lead_id,
-        payload["career1"],
-        payload["career2"],
-        payload["resultsLink"],
+        "📨 Posting UTP payload | endpoint=%s | leadId=%s | career1=%s | career2=%s | resultsLink=%s",
+        endpoint, lead_id, payload["career1"], payload["career2"], payload["resultsLink"],
     )
-
+ 
     try:
         r = requests.post(endpoint, json=payload, headers=headers, timeout=20)
         r.raise_for_status()
         body = r.json()
         logger.info("✅ UTP endpoint response: %s", body)
-
+ 
         if not body.get("success"):
             logger.warning("⚠️  UTP endpoint returned success=false: %s", body)
-
+ 
         # Capture validationId and persist to byw_tracking_algoritmo_AC
         validation_id = body.get("validationId") or body.get("validation_id") or body.get("id")
         if validation_id:
@@ -223,6 +218,6 @@ def post_utp_payload(
                 _write_validation_id(email, str(validation_id))
         else:
             logger.warning("⚠️  No validationId in UTP response: %s", body)
-
+ 
     except Exception:
         logger.exception("⚠️  UTP endpoint post failed (non-fatal)")
