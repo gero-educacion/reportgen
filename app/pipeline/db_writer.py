@@ -2,23 +2,25 @@
 db_writer.py
 ------------
 1. write_majors_to_db()  — upserts 4 majors for any student into byw_autoconocimiento
-2. post_utp_payload()    — looks up legajo from byw_usuarios_habilitados by email,
-                           then sends it as leadId to the UTP CRM endpoint
+2. post_utp_payload()    — looks up lead_id from byw_tracking_algoritmo_AC by email,
+                           POSTs to UTP CRM endpoint with careers + report links,
+                           then writes the returned validationId back to that same table.
 
 UTP endpoint payload shape:
   {
-    "leadId":      "<legajo from byw_usuarios_habilitados>",
-    "career1":     "<Carrera 1>",
-    "career2":     "<Carrera 2>",
-    "resultsLink": "<SiteGround public URL of the report>"
+    "leadId":            "<lead_id from byw_tracking_algoritmo_AC>",
+    "career1":           "<Carrera 1>",
+    "career2":           "<Carrera 2>",
+    "resultsLink":       "<SiteGround public URL — estudiante report>",
+    "resultsLinkPadres": "<SiteGround public URL — padres report>"
   }
 
 Required env vars (MySQL):
   DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME
 
 Required env vars (UTP endpoint):
-  UTP_ENDPOINT_URL
-  UTP_API_KEY  (optional)
+  UTP_ENDPOINT_URL   e.g. https://staging2.geroeducacion.com/scripts/mock_utp_endpoint.php
+  UTP_API_KEY        (optional)
 """
 
 import os
@@ -36,26 +38,27 @@ logger = logging.getLogger(__name__)
 
 def _get_connection() -> pymysql.Connection:
     return pymysql.connect(
-        host        = os.environ["DB_HOST"],
-        port        = int(os.environ.get("DB_PORT", 3306)),
-        user        = os.environ["DB_USER"],
-        password    = os.environ["DB_PASSWORD"],
-        database    = os.environ["DB_NAME"],
-        charset     = "utf8mb4",
-        cursorclass = pymysql.cursors.DictCursor,
+        host            = os.environ["DB_HOST"],
+        port            = int(os.environ.get("DB_PORT", 3306)),
+        user            = os.environ["DB_USER"],
+        password        = os.environ["DB_PASSWORD"],
+        database        = os.environ["DB_NAME"],
+        charset         = "utf8mb4",
+        cursorclass     = pymysql.cursors.DictCursor,
         connect_timeout = 10,
     )
 
 
-def _get_legajo(email: str) -> str | None:
+def _get_lead_id(email: str) -> str | None:
     """
-    Looks up the legajo for this student in byw_usuarios_habilitados by email.
-    Returns the legajo string or None if not found.
+    Looks up lead_id for this student in byw_tracking_algoritmo_AC by email.
+    Returns the lead_id string or None if not found.
     """
     sql = """
-        SELECT legajo
-        FROM byw_usuarios_habilitados
+        SELECT lead_id
+        FROM byw_tracking_algoritmo_AC
         WHERE LOWER(email) = LOWER(%s)
+        ORDER BY response_at DESC
         LIMIT 1
     """
     try:
@@ -65,15 +68,42 @@ def _get_legajo(email: str) -> str | None:
                 cur.execute(sql, (email,))
                 row = cur.fetchone()
         if row:
-            logger.info("✅ Found legajo=%s for %s", row["legajo"], email)
-            return str(row["legajo"])
+            logger.info("✅ Found lead_id=%s for %s", row["lead_id"], email)
+            return str(row["lead_id"])
         else:
-            logger.warning("⚠️  No legajo found for email=%s", email)
+            logger.warning("⚠️  No lead_id found for email=%s", email)
             return None
     except Exception:
-        logger.exception("⚠️  Failed to look up legajo for %s", email)
+        logger.exception("⚠️  Failed to look up lead_id for %s", email)
         return None
 
+
+def _write_validation_id(email: str, validation_id: str):
+    """
+    Writes the validationId returned by the UTP endpoint into
+    byw_tracking_algoritmo_AC, updating the most recent row for this email.
+    """
+    sql = """
+        UPDATE byw_tracking_algoritmo_AC
+        SET    validationId = %s
+        WHERE  LOWER(email) = LOWER(%s)
+        ORDER  BY response_at DESC
+        LIMIT  1
+    """
+    try:
+        conn = _get_connection()
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (validation_id, email))
+            conn.commit()
+        logger.info("✅ validationId=%s written to byw_tracking_algoritmo_AC for %s", validation_id, email)
+    except Exception:
+        logger.exception("⚠️  Failed to write validationId for %s (non-fatal)", email)
+
+
+# ---------------------------------------------------------------------------
+# write_majors_to_db
+# ---------------------------------------------------------------------------
 
 def write_majors_to_db(student: dict):
     """
@@ -85,10 +115,10 @@ def write_majors_to_db(student: dict):
         logger.warning("write_majors_to_db: no email, skipping")
         return
 
-    c1 = student.get("Carrera 1", "")
-    c2 = student.get("Carrera 2", "")
-    c3 = student.get("Carrera 3", "")
-    c4 = student.get("Carrera 4", "")
+    c1 = (student.get("CARRERA_01") or student.get("Carrera 01"))
+    c2 = (student.get("CARRERA_02") or student.get("Carrera 02"))
+    c3 = (student.get("CARRERA_03") or student.get("Carrera 03"))
+    c4 = (student.get("CARRERA_04") or student.get("Carrera 04"))
 
     sql = """
         INSERT INTO byw_autoconocimiento
@@ -121,43 +151,44 @@ def write_majors_to_db(student: dict):
 
 
 # ---------------------------------------------------------------------------
-# UTP endpoint
+# post_utp_payload
 # ---------------------------------------------------------------------------
 
 def post_utp_payload(
     student_id: str,
     student: dict,
-    report_links: dict,         # {report_type: public_url}
+    report_links: dict,     # {"estudiante": "https://...", "padres": "https://..."}
 ):
     """
-    Looks up legajo from DB by email, then POSTs to UTP CRM endpoint.
-    Falls back to student_id as leadId if legajo not found.
+    1. Looks up lead_id from byw_tracking_algoritmo_AC by email.
+    2. POSTs leadId + career1 + career2 + report links to UTP CRM endpoint.
+    3. Captures validationId from the response and writes it back to the table.
     """
-    endpoint = os.environ.get("UTP_ENDPOINT_URL")
+    endpoint = os.environ.get("UTP_ENDPOINT_URL", "").strip().strip('"')
     if not endpoint:
         logger.warning("UTP_ENDPOINT_URL not set — skipping")
         return
 
+    logger.info("📨 UTP endpoint: %s", endpoint)
+
     email   = (student.get("Email") or student.get("email") or "").strip()
     api_key = os.environ.get("UTP_API_KEY", "")
 
-    # Look up legajo — fall back to student_id if not found
-    legajo = _get_legajo(email) if email else None
-    if not legajo:
-        logger.warning("⚠️  No legajo found, falling back to student_id=%s", student_id)
-        legajo = student_id
+    # Look up lead_id — fall back to student_id if not found
+    lead_id = _get_lead_id(email) if email else None
+    if not lead_id:
+        logger.warning("⚠️  No lead_id found, falling back to student_id=%s", student_id)
+        lead_id = student_id
 
-    results_link = (
-        report_links.get("estudiante")
-        or report_links.get("padres")
-        or next(iter(report_links.values()), "")
-    )
+    c1 = (student.get("CARRERA_01") or student.get("Carrera 01"))
+    c2 = (student.get("CARRERA_02") or student.get("Carrera 02"))
+    
 
     payload = {
-        "leadId":      legajo,
-        "career1":     student.get("Carrera 1", ""),
-        "career2":     student.get("Carrera 2", ""),
-        "resultsLink": results_link,
+        "leadId":            lead_id,
+        "career1":           c1,
+        "career2":           c2,
+        "resultsLink":       report_links.get("estudiante", ""),
     }
 
     headers = {
@@ -167,14 +198,32 @@ def post_utp_payload(
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    logger.info("📨 Posting UTP payload | leadId=%s | link=%s", legajo, results_link)
+    logger.info(
+        "📨 Posting UTP payload | leadId=%s | career1=%s | career2=%s | estudiante=%s | padres=%s",
+        lead_id,
+        payload["career1"],
+        payload["career2"],
+        payload["resultsLink"],
+        payload["resultsLinkPadres"],
+    )
 
     try:
         r = requests.post(endpoint, json=payload, headers=headers, timeout=20)
         r.raise_for_status()
         body = r.json()
         logger.info("✅ UTP endpoint response: %s", body)
+
         if not body.get("success"):
             logger.warning("⚠️  UTP endpoint returned success=false: %s", body)
+
+        # Capture validationId and persist to byw_tracking_algoritmo_AC
+        validation_id = body.get("validationId") or body.get("validation_id") or body.get("id")
+        if validation_id:
+            logger.info("🔖 validationId received: %s", validation_id)
+            if email:
+                _write_validation_id(email, str(validation_id))
+        else:
+            logger.warning("⚠️  No validationId in UTP response: %s", body)
+
     except Exception:
         logger.exception("⚠️  UTP endpoint post failed (non-fatal)")
