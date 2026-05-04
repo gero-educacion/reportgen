@@ -124,10 +124,11 @@ def _post_pipeline_tasks(
     # ----------------------------------------------------------
     # WRITE MAJORS TO DB  (all students that have carrera fields)
     # ----------------------------------------------------------
-    try:
-        write_majors_to_db(job)
-    except Exception:
-        logger.exception("⚠️  write_majors_to_db failed (non-fatal)")
+    if rol != "Verde" and rol != "Rojo" and rol != "Amarillo":
+        try:
+            write_majors_to_db(job)
+        except Exception:
+            logger.exception("⚠️  write_majors_to_db failed (non-fatal)")
 
     # ----------------------------------------------------------
     # INPUT JSON → Drive
