@@ -98,6 +98,35 @@ def _write_validation_id(email: str, validation_id: str):
     except Exception:
         logger.exception("⚠️  Failed to write validationId for %s (non-fatal)", email)
 
+def alter_table_reports(user_email: str, links: dict):
+    """
+    Updates reporte_estudiante and reporte_padres in byw_tracking_algoritmo_AC
+    for the most recent row matching this email.
+    """
+    sql = """
+        UPDATE byw_tracking_algoritmo_AC
+        SET    reporte_estudiante = %s,
+               reporte_padres     = %s
+        WHERE  LOWER(email) = LOWER(%s)
+        ORDER  BY response_at DESC
+        LIMIT  1
+    """
+    reporte_estudiante = links.get("estudiante", "")
+    reporte_padres     = links.get("padres", "")
+
+    try:
+        conn = _get_connection()
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (reporte_estudiante, reporte_padres, user_email))
+                rows_affected = cur.rowcount
+            conn.commit()
+        if rows_affected == 0:
+            logger.warning("alter_table_reports: no row found for email=%s", user_email)
+        else:
+            logger.info("✅ Links written to byw_tracking_algoritmo_AC for %s", user_email)
+    except Exception:
+        logger.exception("⚠️  Failed to write links for %s (non-fatal)", user_email)
 
 # ---------------------------------------------------------------------------
 # write_majors_to_db
