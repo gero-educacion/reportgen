@@ -18,7 +18,7 @@ from app.pipeline.drive_downloader import download_drive_file
 from app.pipeline.siteground_sender import send_report_to_siteground, upload_pdf_to_siteground
 from app.pipeline.sheets_updater import update_student_status
 from app.pipeline.student_historic import get_all_links, upsert_student
-from app.pipeline.db_writer import write_majors_to_db, post_utp_payload
+from app.pipeline.db_writer import write_majors_to_db, post_utp_payload, alter_table_reports
 
 logging.basicConfig(
     level=logging.INFO,
@@ -171,6 +171,14 @@ def _post_pipeline_tasks(
                 )
             except Exception:
                 logger.exception("⚠️  post_utp_payload failed (non-fatal)")
+
+            try:
+                alter_table_reports(
+                    user_email = email,
+                    links = sg_file_links,
+                )
+            except Exception:
+                logger.exception("Los links no se subieron a byw_tracking_algoritmo_AC")
 
         # For sheet tracking, treat sg_file_links as drive_links
         drive_links    = sg_file_links
