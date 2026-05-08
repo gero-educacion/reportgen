@@ -30,6 +30,7 @@ RUN python -c "import matplotlib; import matplotlib.pyplot as plt; plt.figure();
 
 # App code
 COPY app /app/app
+COPY worker.py /app/worker.py
 COPY assets /app/assets
 
 EXPOSE 8080
