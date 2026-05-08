@@ -13,3 +13,6 @@ google-auth-oauthlib
 requests
 paramiko
 PyMySQL
+redis>=5.0.0
+rq>=1.16.0
+rq-dashboard>=0.6.0
