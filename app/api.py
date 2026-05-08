@@ -11,7 +11,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("reportgen")
 
-app = FastAPI()o
+app = FastAPI()
 
 logger.info("ok, let's go (queue mode)")
 
