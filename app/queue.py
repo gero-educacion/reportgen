@@ -1,7 +1,7 @@
 import os
 import logging
 from redis import Redis
-from rq import Queue
+from rq import Queue, Retry
 from rq.job import Job
 
 logger = logging.getLogger("reportgen.queue")
@@ -26,7 +26,7 @@ def enqueue_report(job: dict) -> str:
         process_report_job,
         job,
         job_id=job.get("job_id") or job.get("student_id"),
-        retry=3,
+        retry=Retry(max=3, interval=60),
         meta={"student_id": job.get("student_id"), "email": job.get("Email") or job.get("email")},
     )
     logger.info("📥 Job enqueued: %s", rq_job.id)
