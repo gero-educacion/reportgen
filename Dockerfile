@@ -19,6 +19,7 @@ RUN fc-cache -fv
 # Matplotlib cache location (must be writable)
 ENV MPLCONFIGDIR=/app/.mplconfig
 RUN mkdir -p /app/.mplconfig
+RUN mkdir -p /app/tmp/jobs
 
 # Python deps
 COPY requirements.txt .
