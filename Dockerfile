@@ -20,6 +20,7 @@ RUN fc-cache -fv
 ENV MPLCONFIGDIR=/app/.mplconfig
 RUN mkdir -p /app/.mplconfig
 RUN mkdir -p /app/tmp/jobs
+RUN mkdir -p /app/data
 
 # Python deps
 COPY requirements.txt .
