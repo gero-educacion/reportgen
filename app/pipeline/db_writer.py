@@ -241,8 +241,8 @@ def post_utp_payload(
         validation_id = body.get("validationId") or body.get("validation_id") or body.get("id")
         if validation_id:
             logger.info("🔖 validationId received: %s", validation_id)
-            if email:
-                _write_validation_id(email, str(validation_id))
+            if user_email:
+                _write_validation_id(user_email, str(validation_id))
         else:
             logger.warning("⚠️  No validationId in UTP response: %s", body)
  
