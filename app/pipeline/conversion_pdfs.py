@@ -40,5 +40,5 @@ def convert_to_pdf(pptx_path: Path, pdf_path: Path) -> Path:
         raise RuntimeError(f"Gotenberg returned a suspiciously small PDF for {pptx_path.name}")
 
     logger.info("✅ PDF received from Gotenberg: %s (%d bytes)", pdf_path.name, pdf_path.stat().st_size)
-    
+
     return pdf_path
