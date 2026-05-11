@@ -159,6 +159,9 @@ def process_report_job(job: dict):
     # ---------------------------------------------------------------
     if is_utp:
         user_email = (job.get("user_email") or "")
+        if user_email:
+            logger.exception("the user email is %s", user_email)
+
         for report_type, pdf_path in reports.items():
             filename = f"{safe_filename(name)}_{report_type}_{student_id}.pdf"
             try:
@@ -166,9 +169,9 @@ def process_report_job(job: dict):
             except Exception:
                 logger.exception("⚠️  SiteGround upload failed for %s", report_type)
 
-        if sg_file_links:
+        if sg_file_links and user_email:
             try:
-                post_utp_payload(student_id=student_id, student=job, report_links=sg_file_links)
+                post_utp_payload(student_id, user_email, job, sg_file_links)
             except Exception:
                 logger.exception("⚠️  post_utp_payload failed (non-fatal)")
             try:

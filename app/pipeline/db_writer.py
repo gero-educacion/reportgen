@@ -184,6 +184,7 @@ def write_majors_to_db(student: dict):
 
 def post_utp_payload(
     student_id: str,
+    user_email: str,
     student: dict,
     report_links: dict,     # {"estudiante": "https://...", "padres": "https://..."}
 ):
@@ -200,9 +201,7 @@ def post_utp_payload(
     api_key = os.environ.get("UTP_API_KEY", "").strip()
     if not api_key:
         logger.warning("UTP_API_KEY not set — request will likely be rejected")
- 
-    user_email = (student.get("user_email") or student.get("email") or "").strip()
- 
+  
     # Look up lead_id — fall back to student_id if not found
     lead_id = _get_lead_id(user_email) if user_email else None
     if not lead_id:
