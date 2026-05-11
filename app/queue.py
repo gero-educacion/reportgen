@@ -30,6 +30,7 @@ def enqueue_report(job: dict) -> str:
         meta={"student_id": job.get("student_id"), "email": job.get("Email") or job.get("email")},
     )
     logger.info("📥 Job enqueued: %s", rq_job.id)
+    logger.info("found me yet?")
     return rq_job.id
 
 def get_job_status(job_id: str) -> dict:
