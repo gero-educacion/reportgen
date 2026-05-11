@@ -19,6 +19,7 @@ RUN fc-cache -fv
 # Matplotlib cache location (must be writable)
 ENV MPLCONFIGDIR=/app/.mplconfig
 RUN mkdir -p /app/.mplconfig
+RUN mkdir -p /app/tmp/jobs
 
 # Python deps
 COPY requirements.txt .
@@ -29,6 +30,7 @@ RUN python -c "import matplotlib; import matplotlib.pyplot as plt; plt.figure();
 
 # App code
 COPY app /app/app
+COPY worker.py /app/worker.py
 COPY assets /app/assets
 
 EXPOSE 8080
