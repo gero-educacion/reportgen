@@ -52,15 +52,11 @@ def find_soffice() -> str:
         "Install LibreOffice or set SOFFICE_PATH."
     )
 
+import threading
+
+_CONVERSION_SEMAPHORE = threading.Semaphore(2)
 
 def convert_to_pdf(pptx_path: Path, pdf_path: Path) -> Path:
-    """
-    Converts ONE PPTX file to ONE PDF file using LibreOffice.
-
-    Each call gets its own isolated LibreOffice user-profile directory so
-    concurrent conversions (e.g. parallel Cloud Run requests) don't fight
-    over the shared ~/.config/libreoffice lock and fail with exit status 1.
-    """
     if not pptx_path.exists():
         raise FileNotFoundError(pptx_path)
 
@@ -69,11 +65,8 @@ def convert_to_pdf(pptx_path: Path, pdf_path: Path) -> Path:
     output_dir = pdf_path.parent
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Unique throwaway profile dir — lives next to the output PDF so it's
-    # automatically cleaned up when the job_dir is removed.
     profile_dir = output_dir / f".lo_profile_{pptx_path.stem}"
     profile_dir.mkdir(parents=True, exist_ok=True)
-    # LibreOffice expects a file:// URI for UserInstallation
     profile_uri = profile_dir.as_uri()
 
     cmd = [
@@ -89,26 +82,24 @@ def convert_to_pdf(pptx_path: Path, pdf_path: Path) -> Path:
         str(pptx_path),
     ]
 
-    try:
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(
-            f"LibreOffice failed (exit {e.returncode})\n"
-            f"stdout: {e.stdout}\n"
-            f"stderr: {e.stderr}"
-        )
+    with _CONVERSION_SEMAPHORE:
+        try:
+            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(
+                f"LibreOffice failed (exit {e.returncode})\n"
+                f"stdout: {e.stdout}\n"
+                f"stderr: {e.stderr}"
+            )
+        finally:
+            shutil.rmtree(profile_dir, ignore_errors=True)
 
-    # LibreOffice outputs PDF with same base name as the input file
     generated_pdf = output_dir / (pptx_path.stem + ".pdf")
 
     if not generated_pdf.exists():
         raise RuntimeError("LibreOffice did not produce a PDF")
 
-    # Rename/move to the desired pdf_path if needed
     if generated_pdf != pdf_path:
         generated_pdf.replace(pdf_path)
-
-    # Clean up the throwaway profile so we don't accumulate junk
-    shutil.rmtree(profile_dir, ignore_errors=True)
 
     return pdf_path
