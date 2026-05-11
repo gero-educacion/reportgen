@@ -110,7 +110,7 @@ def convert_to_pdf(pptx_path: Path, pdf_path: Path) -> Path:
                     f"stderr: {stderr}"
                 )
 
-            logger.info("✅ LibreOffice finished: %s", pptx_path.name)
+            logger.info("✅ LibreOffice finished: %s | stdout=%s | stderr=%s", pptx_path.name, stdout, stderr)
 
         finally:
             # Kill any still-running process (safety net for unexpected paths)
