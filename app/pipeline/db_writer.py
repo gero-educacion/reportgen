@@ -244,7 +244,7 @@ def post_utp_payload(
             if user_email:
                 _write_validation_id(user_email, str(validation_id))
         else:
-            logger.warning("⚠️  No validationId in UTP response: %s", body)
+            logger.warning("⚠️ No validationId in UTP response: %s", body)
  
     except Exception:
         logger.exception("⚠️  UTP endpoint post failed (non-fatal)")
