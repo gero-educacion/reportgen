@@ -201,10 +201,10 @@ def post_utp_payload(
     if not api_key:
         logger.warning("UTP_API_KEY not set — request will likely be rejected")
  
-    email = (student.get("Email") or student.get("email") or "").strip()
+    user_email = (student.get("user_email") or student.get("email") or "").strip()
  
     # Look up lead_id — fall back to student_id if not found
-    lead_id = _get_lead_id(email) if email else None
+    lead_id = _get_lead_id(user_email) if user_email else None
     if not lead_id:
         logger.warning("⚠️  No lead_id found, falling back to student_id=%s", student_id)
         lead_id = student_id
