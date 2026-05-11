@@ -6,6 +6,8 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     libreoffice \
     libreoffice-writer \
+    libreoffice-java-common \
+    default-jre-headless \
     fonts-dejavu \
     fonts-liberation \
     fontconfig \
