@@ -158,6 +158,7 @@ def process_report_job(job: dict):
     # UTP BRANCH
     # ---------------------------------------------------------------
     if is_utp:
+        user_email = (job.get("user_email") or "")
         for report_type, pdf_path in reports.items():
             filename = f"{safe_filename(name)}_{report_type}_{student_id}.pdf"
             try:
@@ -171,7 +172,7 @@ def process_report_job(job: dict):
             except Exception:
                 logger.exception("⚠️  post_utp_payload failed (non-fatal)")
             try:
-                alter_table_reports(user_email=email, links=sg_file_links)
+                alter_table_reports(user_email=user_email, links=sg_file_links)
             except Exception:
                 logger.exception("⚠️  alter_table_reports failed (non-fatal)")
 

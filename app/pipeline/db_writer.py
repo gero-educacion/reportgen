@@ -51,13 +51,14 @@ def _get_connection() -> pymysql.Connection:
 
 def _get_lead_id(email: str) -> str | None:
     """
-    Looks up lead_id for this student in byw_tracking_algoritmo_AC by email.
+    Looks up lead_id for this student in byw_usuarios_habilitados by email.
     Returns the lead_id string or None if not found.
     """
     sql = """
         SELECT legajo
         FROM byw_usuarios_habilitados
-        WHERE LOWER(email) = LOWER(%s)
+        WHERE LOWER(cedula_matricula) = LOWER(%s)
+        AND cliente = "Universidad Tecnológica de Perú"
     """
     try:
         conn = _get_connection()
