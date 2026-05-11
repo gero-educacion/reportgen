@@ -90,9 +90,13 @@ def convert_to_pdf(pptx_path: Path, pdf_path: Path) -> Path:
     ]
 
     try:
-        subprocess.run(cmd, check=True)
-    finally: 
-        shutil.rmtree(profile_dir, ignore_errors=True)
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(
+            f"LibreOffice failed (exit {e.returncode})\n"
+            f"stdout: {e.stdout}\n"
+            f"stderr: {e.stderr}"
+        )
 
     # LibreOffice outputs PDF with same base name as the input file
     generated_pdf = output_dir / (pptx_path.stem + ".pdf")
