@@ -71,7 +71,7 @@ def _get_lead_id(email: str) -> str | None:
             return str(row["legajo"])
         else:
             logger.warning("⚠️  No lead_id found for email=%s", email)
-            return None
+            return "failed"
     except Exception:
         logger.exception("⚠️  Failed to look up lead_id for %s", email)
         return None
@@ -204,7 +204,7 @@ def post_utp_payload(
   
     # Look up lead_id — fall back to student_id if not found
     lead_id = _get_lead_id(user_email) if user_email else None
-    if not lead_id:
+    if lead_id == "failed":
         logger.warning("⚠️  No lead_id found, falling back to student_id=%s", student_id)
         lead_id = student_id
 
