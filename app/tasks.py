@@ -178,6 +178,13 @@ def process_report_job(job: dict):
                 alter_table_reports(user_email=user_email, links=sg_file_links)
             except Exception:
                 logger.exception("⚠️  alter_table_reports failed (non-fatal)")
+            try:
+                from app.pipeline.email_sender import send_utp_student_email
+                reporte_url = sg_file_links.get("estudiante", "")
+                if reporte_url:
+                    send_utp_student_email(cedula=user_email, reporte_url=reporte_url)
+            except Exception:
+                logger.exception("⚠️  send_utp_student_email failed (non-fatal)")
 
         drive_links    = sg_file_links
         drive_uploaded = "yes (siteground)" if sg_file_links else "no"

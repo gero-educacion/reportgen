@@ -127,3 +127,145 @@ def send_report_email(
         logger.exception("❌ Email sending failed")
     else:
         logger.info("✅ Email sent successfully")
+
+def _get_student_contact(cedula: str) -> dict | None:
+    """
+    Looks up nombre, apellido and email from byw_usuarios_habilitados
+    matching cedula_matricula = cedula.
+    Returns a dict with keys nombre, apellido, email or None if not found.
+    """
+    import pymysql
+    import pymysql.cursors
+
+    sql = """
+        SELECT nombre, apellido, email
+        FROM byw_usuarios_habilitados
+        WHERE LOWER(cedula_matricula) = LOWER(%s)
+          AND cliente = 'Universidad Tecnológica de Perú'
+        LIMIT 1
+    """
+    try:
+        conn = pymysql.connect(
+            host=os.environ["DB_HOST"],
+            port=int(os.environ.get("DB_PORT", 3306)),
+            user=os.environ["DB_USER"],
+            password=os.environ["DB_PASSWORD"],
+            database=os.environ["DB_NAME"],
+            charset="utf8mb4",
+            cursorclass=pymysql.cursors.DictCursor,
+            connect_timeout=10,
+        )
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (cedula,))
+                return cur.fetchone()
+    except Exception:
+        logger.exception("Failed to fetch student contact for cedula=%s", cedula)
+        return None
+
+
+def build_utp_student_email_html(nombre: str, apellido: str, reporte_url: str) -> str:
+    return f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tu Perfil Vocacional</title>
+</head>
+<body style="margin:0; padding:0; background-color:#f4f4f4; font-family: Calibri, 'Calibri', sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f4; padding: 30px 0;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff; border-radius:4px; overflow:hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+          <tr>
+            <td style="background-color:#ffffff; padding: 28px 40px;">
+              <img src="https://geroeducacion.com/wp-content/uploads/2026/03/UTP_LOGO_BRANDBOOK-copia-2.png" alt="UTP Logo" style="height: 60px; max-width: 260px;" />
+            </td>
+          </tr>
+          <tr>
+            <td style="height: 5px; background-color: #C8102E;"></td>
+          </tr>
+          <tr>
+            <td style="padding: 40px 40px 30px 40px;">
+              <p style="font-family: Calibri, sans-serif; font-size: 16px; color: #222222; line-height: 1.6; margin: 0 0 18px 0;">
+                ¡Hola <strong>{nombre} {apellido}</strong>!
+              </p>
+              <p style="font-family: Calibri, sans-serif; font-size: 16px; color: #222222; line-height: 1.6; margin: 0 0 18px 0;">
+                Muchas gracias por realizar tu orientación vocacional junto con la Universidad Tecnológica del Perú.
+              </p>
+              <p style="font-family: Calibri, sans-serif; font-size: 16px; color: #222222; line-height: 1.6; margin: 0 0 28px 0;">
+                Te compartimos en el siguiente link tu perfil vocacional.
+              </p>
+              <table cellpadding="0" cellspacing="0" style="margin-bottom: 30px;">
+                <tr>
+                  <td style="background-color: #C8102E; border-radius: 4px;">
+                    <a href="{reporte_url}" style="display: inline-block; padding: 13px 32px; font-family: Calibri, sans-serif; font-size: 15px; font-weight: bold; color: #ffffff; text-decoration: none; letter-spacing: 0.3px;">
+                      Ver mi perfil vocacional &rarr;
+                    </a>
+                  </td>
+                </tr>
+              </table>
+              <p style="font-family: Calibri, sans-serif; font-size: 16px; color: #222222; line-height: 1.6; margin: 0 0 6px 0;">
+                Cualquier duda cuentas con nosotros para acompañarte.
+              </p>
+              <p style="font-family: Calibri, sans-serif; font-size: 16px; color: #222222; line-height: 1.6; margin: 0 0 30px 0;">
+                Saludos,
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color: #1a1a1a; padding: 20px 40px;">
+              <p style="font-family: Calibri, sans-serif; font-size: 13px; color: #999999; margin: 0; text-align: center;">
+                Universidad Tecnológica del Perú &nbsp;|&nbsp; utp.edu.pe
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>"""
+
+
+def send_utp_student_email(cedula: str, reporte_url: str) -> None:
+    """
+    Sends the UTP student report email.
+    Looks up nombre, apellido and email from byw_usuarios_habilitados by cedula_matricula.
+    """
+    if not reporte_url:
+        logger.warning("send_utp_student_email: missing reporte_url, skipping")
+        return
+
+    contact = _get_student_contact(cedula)
+    if not contact:
+        logger.warning("send_utp_student_email: no contact found for cedula=%s", cedula)
+        return
+
+    nombre = contact["nombre"]
+    apellido = contact["apellido"]
+    to_email = contact["email"]
+
+    if not to_email:
+        logger.warning("send_utp_student_email: no email for cedula=%s", cedula)
+        return
+
+    sg = SendGridAPIClient(os.environ.get("SENDGRID_API_KEY"))
+
+    message = Mail(
+        from_email=(os.environ["SENDGRID_FROM"], "UTP Perfil Vocacional"),
+        to_emails=to_email,
+        subject='🔴 UTP | Tu perfil vocacional está listo',
+        html_content=build_utp_student_email_html(nombre, apellido, reporte_url),
+    )
+    message.reply_to = CC_ADDRESS
+    message.cc = [Cc(CC_ADDRESS)]
+
+    logger.info("📧 Sending UTP student email to %s for cedula=%s", to_email, cedula)
+
+    response = sg.send(message)
+
+    if response.status_code >= 400:
+        logger.error("❌ UTP student email failed — status %s", response.status_code)
+    else:
+        logger.info("✅ UTP student email sent to %s", to_email)
