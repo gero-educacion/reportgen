@@ -256,7 +256,7 @@ def send_utp_student_email(cedula: str, reporte_url: str) -> None:
     sg = SendGridAPIClient(os.environ.get("SENDGRID_API_KEY"))
 
     message = Mail(
-        from_email=(os.environ["SENDGRID_FROM"], "UTP Perfil Vocacional"),
+        from_email=os.environ["SENDGRID_FROM"],
         to_emails=to_email,
         subject='🔴 UTP | Tu perfil vocacional está listo',
         html_content=build_utp_student_email_html(nombre, apellido, reporte_url),
