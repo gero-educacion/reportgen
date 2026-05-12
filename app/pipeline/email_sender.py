@@ -246,6 +246,9 @@ def send_utp_student_email(cedula: str, reporte_url: str) -> None:
     apellido = contact["apellido"]
     to_email = contact["email"]
 
+    if to_email and to_email.lower() == "aospinat@utp.edu.pe":
+        logger.info("send_utp_student_email: skipping test email %s", to_email)
+        return
     if not to_email:
         logger.warning("send_utp_student_email: no email for cedula=%s", cedula)
         return
