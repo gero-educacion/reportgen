@@ -266,9 +266,13 @@ def send_utp_student_email(cedula: str, reporte_url: str) -> None:
 
     logger.info("📧 Sending UTP student email to %s for cedula=%s", to_email, cedula)
 
-    response = sg.send(message)
-
-    if response.status_code >= 400:
-        logger.error("❌ UTP student email failed — status %s", response.status_code)
-    else:
-        logger.info("✅ UTP student email sent to %s", to_email)
+    try:
+        response = sg.send(message)
+        if response.status_code >= 400:
+          logger.error("❌ UTP student email failed — status %s", response.status_code)
+        else:
+          logger.info("✅ UTP student email sent to %s", to_email)
+    except Exception as e:
+        logger.error("❌ UTP student email error — %s | body=%s", e, getattr(e, 'body', None))
+        raise
+    
