@@ -219,10 +219,9 @@ def post_utp_payload(
   
     # Look up lead_id — fall back to student_id if not found
     lead_id = _get_lead_id(user_email) if user_email else None
-    logger.warning("the lead id for this person is %s!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", lead_id)
     if lead_id == "failed":
-        logger.warning("⚠️  FAILED, FALLING BACK TO STUDENT ID =%s", student_id)
-        lead_id = student_id
+        logger.warning("⚠️  FAILED, FALLING BACK TO USER_EMAIL =%s", user_email)
+        lead_id = user_email
 
     c1 = (student.get("CARRERA_01") or student.get("Carrera 01"))
     c2 = (student.get("CARRERA_02") or student.get("Carrera 02"))
