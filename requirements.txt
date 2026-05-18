@@ -14,5 +14,5 @@ requests
 paramiko
 PyMySQL
 redis>=4.6.0
-rq>=1.15.o1
+rq>=1.15.01
 rq-dashboard>=0.6.0

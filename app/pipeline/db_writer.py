@@ -72,10 +72,6 @@ def _get_lead_id(email: str) -> str | None:
         else:
             return "failed"
     except Exception as e:
-        try:
-            logger.error("⚠️  UTP response body: %s", r.text)
-        except Exception:
-            pass
         logger.exception("⚠️  Failed to look up lead_id for %s", email)
         return None
 
@@ -100,10 +96,6 @@ def _write_validation_id(email: str, validation_id: str):
             conn.commit()
         logger.info("✅ validationId=%s written to byw_tracking_algoritmo_AC for %s", validation_id, email)
     except Exception as e:
-        try:
-            logger.error("⚠️  UTP response body: %s", r.text)
-        except Exception:
-            pass
         logger.exception("⚠️  Failed to write validationId for %s (non-fatal)", email)
 
 def alter_table_reports(user_email: str, links: dict):
@@ -134,10 +126,6 @@ def alter_table_reports(user_email: str, links: dict):
         else:
             logger.info("✅ Links written to byw_tracking_algoritmo_AC for %s", user_email)
     except Exception as e:
-        try:
-            logger.error("⚠️  UTP response body: %s", r.text)
-        except Exception:
-            pass
         logger.exception("⚠️  Failed to write links for %s (non-fatal)", user_email)
 
 # ---------------------------------------------------------------------------
@@ -186,10 +174,6 @@ def write_majors_to_db(student: dict):
             conn.commit()
         logger.info("✅ Majors written to DB for %s", email)
     except Exception as e:
-        try:
-            logger.error("⚠️  UTP response body: %s", r.text)
-        except Exception:
-            pass
         logger.exception("⚠️  Failed to write majors to DB for %s (non-fatal)", email)
 
 
