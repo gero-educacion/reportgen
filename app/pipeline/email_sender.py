@@ -10,6 +10,7 @@ from sendgrid.helpers.mail import (
     FileType,
     Disposition,
     Cc,
+    Bcc,
 )
 import logging
 
@@ -259,7 +260,7 @@ def send_utp_student_email(cedula: str, reporte_url: str) -> None:
         html_content=build_utp_student_email_html(nombre, apellido, reporte_url),
     )
     message.reply_to = CC_ADDRESS
-    message.cc = [Cc(CC_ADDRESS)]
+    message.bcc = [Bcc(CC_ADDRESS)]
 
     logger.info("📧 Sending UTP student email to %s for cedula=%s", to_email, cedula)
 

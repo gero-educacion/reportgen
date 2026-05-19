@@ -49,31 +49,31 @@ def _get_connection() -> pymysql.Connection:
     )
 
 
-def _get_lead_id(email: str) -> str | None:
-    """
-    Looks up lead_id for this student in byw_usuarios_habilitados by email.
-    Returns the lead_id string or None if not found.
-    """
-    sql = """
-        SELECT legajo
-        FROM byw_usuarios_habilitados
-        WHERE LOWER(cedula_matricula) = LOWER(%s)
-        AND cliente = "Universidad Tecnológica de Perú"
-    """
-    try:
-        conn = _get_connection()
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, (email,))
-                row = cur.fetchone()
-        if row:
-            logger.info("✅ Found lead_id=%s for %s", row["legajo"], email)
-            return str(row["legajo"])
-        else:
-            return "failed"
-    except Exception as e:
-        logger.exception("⚠️  Failed to look up lead_id for %s", email)
-        return None
+# def _get_lead_id(email: str) -> str | None:
+#     """
+#     Looks up lead_id for this student in byw_usuarios_habilitados by email.
+#     Returns the lead_id string or None if not found.
+#     """
+#     sql = """
+#         SELECT legajo
+#         FROM byw_usuarios_habilitados
+#         WHERE LOWER(cedula_matricula) = LOWER(%s)
+#         AND cliente = "Universidad Tecnológica de Perú"
+#     """
+#     try:
+#         conn = _get_connection()
+#         with conn:
+#             with conn.cursor() as cur:
+#                 cur.execute(sql, (email,))
+#                 row = cur.fetchone()
+#         if row:
+#             logger.info("✅ Found lead_id=%s for %s", row["legajo"], email)
+#             return str(row["legajo"])
+#         else:
+#             return "failed"
+#     except Exception as e:
+#         logger.exception("⚠️  Failed to look up lead_id for %s", email)
+#         return None
 
 
 def _write_validation_id(email: str, validation_id: str):
@@ -202,16 +202,16 @@ def post_utp_payload(
         logger.warning("UTP_API_KEY not set — request will likely be rejected")
   
     # Look up lead_id — fall back to student_id if not found
-    lead_id = _get_lead_id(user_email) if user_email else None
-    if lead_id == "failed":
-        logger.warning("⚠️  FAILED, FALLING BACK TO USER_EMAIL =%s", user_email)
-        lead_id = user_email
+    # lead_id = _get_lead_id(user_email) if user_email else None
+    # if lead_id == "failed":
+    #     logger.warning("⚠️  FAILED, FALLING BACK TO USER_EMAIL =%s", user_email)
+    #     lead_id = user_email
 
     c1 = (student.get("CARRERA_01") or student.get("Carrera 01"))
     c2 = (student.get("CARRERA_02") or student.get("Carrera 02"))
  
     payload = {
-        "leadId":      lead_id,
+        "leadId":      user_email,
         "career1":     c1,
         "career2":     c2,
         "resultsLink": report_links.get("estudiante", ""),
@@ -224,7 +224,7 @@ def post_utp_payload(
  
     logger.info(
         "📨 Posting UTP payload | endpoint=%s | leadId=%s | career1=%s | career2=%s | resultsLink=%s",
-        endpoint, lead_id, payload["career1"], payload["career2"], payload["resultsLink"],
+        endpoint, user_email, payload["career1"], payload["career2"], payload["resultsLink"],
     )
  
     try:
