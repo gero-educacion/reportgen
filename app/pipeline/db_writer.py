@@ -224,8 +224,8 @@ def post_utp_payload(
     }
  
     logger.info(
-        "📨 Posting UTP payload | endpoint=%s | leadId=%s | career1=%s | career2=%s | resultsLink=%s",
-        endpoint, user_email, payload["career1"], payload["career2"], payload["resultsLink"],
+        "📨 Posting UTP payload | endpoint=%s | leadId=%s | career1=%s | career2=%s | resultsLink=%s | resultsLinkParent=%s",
+        endpoint, user_email, payload["career1"], payload["career2"], payload["resultsLink"], payload["resultsLinkParent"],
     )
  
     try:
