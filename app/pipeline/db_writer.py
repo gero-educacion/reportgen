@@ -215,6 +215,7 @@ def post_utp_payload(
         "career1":     c1,
         "career2":     c2,
         "resultsLink": report_links.get("estudiante", ""),
+        "resultsLinkParent": report_links.get("padres", ""),
     }
  
     headers = {
