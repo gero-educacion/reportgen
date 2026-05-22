@@ -17,7 +17,14 @@ import logging
 logger = logging.getLogger(__name__)
 
 CC_ADDRESS = "operaciones@geroeducacion.com"
-
+    
+def _logo_src(assets_dir: str = "/app/assets") -> str:
+    logo_path = Path(assets_dir) / "utp-logo.png" 
+    if not logo_path.exists():
+        logger.warning("Logo not found at %s — falling back to URL", logo_path)
+        return "https://geroeducacion.com/wp-content/uploads/2026/03/UTP_LOGO_BRANDBOOK-copia-2.png"
+    b64 = base64.b64encode(logo_path.read_bytes()).decode()
+    return f"data:image/png;base64,{b64}"
 
 def get_first_name(student):
     full = (student.get("Nombre y Apellido") or student.get("nombre_estudiante")).strip()
@@ -166,6 +173,7 @@ def _get_student_contact(cedula: str) -> dict | None:
 
 
 def build_utp_student_email_html(nombre: str, apellido: str, reporte_url: str) -> str:
+    logo = _logo_src()
     return f"""<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -180,7 +188,7 @@ def build_utp_student_email_html(nombre: str, apellido: str, reporte_url: str) -
         <table width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff; border-radius:4px; overflow:hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
           <tr>
             <td style="background-color:#ffffff; padding: 28px 40px;">
-              <img src="https://geroeducacion.com/wp-content/uploads/2026/03/UTP_LOGO_BRANDBOOK-copia-2.png" alt="UTP Logo" style="width: 200px; max-width: 100%; height: auto; display: block;" />
+              <img src="{logo}" alt="UTP Logo" width="180" style="width: 180px; height: 60px; max-width: 260px;" />
             </td>
           </tr>
           <tr>
@@ -273,4 +281,4 @@ def send_utp_student_email(cedula: str, reporte_url: str) -> None:
     except Exception as e:
         logger.error("❌ UTP student email error — %s | body=%s", e, getattr(e, 'body', None))
         raise
-    
+
