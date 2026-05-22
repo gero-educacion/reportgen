@@ -6,3 +6,5 @@ deploy.sh
 deploy.ps1
 data/
 .env
+email.html
+prueba.ipynb
