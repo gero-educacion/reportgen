@@ -187,7 +187,7 @@ def build_utp_student_email_html(nombre: str, apellido: str, reporte_url: str) -
         <table width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff; border-radius:4px; overflow:hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
           <tr>
             <td style="background-color:#ffffff; padding: 28px 40px;">
-              <img src="https://geroeducacion.com/wp-content/uploads/2026/03/UTP_LOGO_BRANDBOOK-copia-2.png" alt="UTP Logo" width="250" style="width: 250px; height: 60px; max-width: 260px;" />
+              <img src="https://geroeducacion.com/wp-content/uploads/2026/03/UTP_LOGO_BRANDBOOK-copia-2.png" alt="UTP Logo" width="200" style="width: 200px; height: 60px; max-width: 260px;" />
             </td>
           </tr>
           <tr>
