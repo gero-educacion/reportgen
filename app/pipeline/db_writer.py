@@ -214,7 +214,7 @@ def post_utp_payload(
         "leadId":      user_email,
         "career1":     c1,
         "career2":     c2,
-        "resultsLink": report_links.get("estudiante", ""),
+        "resultsLink":       report_links.get("estudiante", ""),
         "resultsLinkParent": report_links.get("padres", ""),
     }
  
