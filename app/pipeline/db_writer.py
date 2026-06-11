@@ -208,12 +208,11 @@ def post_utp_payload(
     #     lead_id = user_email
 
     c1 = (student.get("CARRERA_01") or student.get("Carrera 01"))
-    c2 = (student.get("CARRERA_02") or student.get("Carrera 02"))
  
     payload = {
         "leadId":      user_email,
         "career1":     c1,
-        "career2":     c2,
+        "career2":     "",
         "resultsLink":       report_links.get("estudiante", ""),
         "resultsLinkParent": report_links.get("padres", ""),
     }
