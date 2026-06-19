@@ -118,8 +118,11 @@ def process_report_job(job: dict):
         pdf_paths, report_types = run_student_pipeline(job, job_dir)
         logger.info("📄 PDFs done: %s", report_types)
 
-        if rol in ("counseling", "gs_actividades"):
-            upsert_historico(job)
+        try:
+            if rol in ("counseling", "gs_actividades"):
+                upsert_historico(job)
+        except Exception as e:
+            logger.exception("no se pudo insertar el historico buuuuuuuu")
         
     except Exception as e:
         logger.exception("💥 Pipeline failed for %s", job_id)
