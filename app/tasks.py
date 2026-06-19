@@ -13,6 +13,7 @@ from app.pipeline.siteground_sender import send_report_to_siteground, upload_pdf
 from app.pipeline.sheets_updater import update_student_status
 from app.pipeline.student_historic import get_all_links, upsert_student
 from app.pipeline.db_writer import write_majors_to_db, post_utp_payload, alter_table_reports
+from app.pipeline.historic_db_writer import upsert_historico
 
 logger = logging.getLogger("reportgen.tasks")
 
@@ -116,6 +117,10 @@ def process_report_job(job: dict):
     try:
         pdf_paths, report_types = run_student_pipeline(job, job_dir)
         logger.info("📄 PDFs done: %s", report_types)
+
+        if rol in ("counseling", "gs_actividades"):
+            upsert_historico(job)
+        
     except Exception as e:
         logger.exception("💥 Pipeline failed for %s", job_id)
         update_student_status(student_id, job, status="error", error_msg=str(e))
