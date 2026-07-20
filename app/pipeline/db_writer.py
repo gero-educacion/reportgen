@@ -208,6 +208,8 @@ def post_utp_payload(
     #     lead_id = user_email
 
     c1 = (student.get("CARRERA_01") or student.get("Carrera 01"))
+    telefono = student.get("Telefono") or ""
+    email = student.get("Email_formulario") or ""
  
     payload = {
         "leadId":      user_email,
@@ -215,6 +217,8 @@ def post_utp_payload(
         "career2":     "",
         "resultsLink":       report_links.get("estudiante", ""),
         "resultsLinkParent": report_links.get("padres", ""),
+        "telephone": telefono,
+        "email": email
     }
  
     headers = {
