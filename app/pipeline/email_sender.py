@@ -224,7 +224,7 @@ def build_utp_student_email_html(nombre: str, apellido: str, reporte_url: str) -
           <tr>
             <td style="background-color: #1a1a1a; padding: 20px 40px;">
               <p style="font-family: Calibri, sans-serif; font-size: 13px; color: #999999; margin: 0; text-align: center;">
-                Universidad Tecnológica del Perú &nbsp;|&nbsp; utp.edu.pe
+                Universidad Tecnológica del Perú &nbsp;|&nbsp; Test Vocacional UTP
               </p>
             </td>
           </tr>
@@ -261,7 +261,7 @@ def send_utp_student_email(cedula: str, reporte_url: str) -> None:
     sg = SendGridAPIClient(os.environ.get("SENDGRID_API_KEY"))
 
     message = Mail(
-        from_email=(os.environ.get("SENDGRID_FROM_UTP"), "Universidad Tecnológica de Perú"),
+        from_email=(os.environ.get("SENDGRID_FROM_UTP"), "Test Vocacional UTP"),
         to_emails=to_email,
         subject='🔴 UTP | Tu perfil vocacional está listo',
         html_content=build_utp_student_email_html(nombre, apellido, reporte_url),
