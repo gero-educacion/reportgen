@@ -28,6 +28,8 @@ def determine_template(student: dict, assets_dir: Path) -> Path:
         return [("como decidir",  assets_dir / "como_decidir.pptx")]
     elif rol == "desempatador":
         return [("desempatador",  assets_dir / "desempatador.pptx")]
+    elif rol == "contexto":
+        return [("contexto", assets_dir / "template_tu_contexto.pptx")]
     elif rol == "UTP":
         return [("estudiante", assets_dir / "template_utp_alumnos.pptx"),
                 ("padres", assets_dir / "template_utp_padres.pptx")
@@ -40,7 +42,6 @@ def determine_template(student: dict, assets_dir: Path) -> Path:
 
 def map_placeholders(student: dict) -> dict:
     return {f"<<{k}>>": v for k, v in student.items()}
-
 
 # ---------------------------------------------------------------------------
 # Run-merging helpers
