@@ -8,3 +8,6 @@ data/
 .env
 email.html
 prueba.ipynb
+test_payload.ipynb
+mock_payloads.txt
+docker-compose.local-test.yml

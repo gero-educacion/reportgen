@@ -4,41 +4,67 @@ from pptx.util import Pt
 from pathlib import Path
 from copy import deepcopy
 
+from app.pipeline.job_config import get_templates
+
 log = logging.getLogger(__name__)
 
 
 def determine_template(student: dict, assets_dir: Path) -> Path:
     log.info("determining template...")
     rol = student.get("Rol")
+    return get_templates(rol)
+    # if rol in ("counseling", "compass-directo"):
+    #     return [
+    #         ("estudiante", assets_dir / "Template_Autoconocimiento 2.0 (counseling).pptx"),
+    #         ("padres",     assets_dir / "Template_Autoconocimiento 2.0 (Padres - Counseling).pptx"),
+    #     ]
+    # elif rol == "Rojo":
+    #     return [("ccr_rojo",     assets_dir / "CCR_EN BOXES.pptx")]
+    # elif rol == "Amarillo":
+    #     return [("ccr_amarillo", assets_dir / "CCR_CALENTANDO MOTORES.pptx")]
+    # elif rol == "Verde":
+    #     return [("ccr_verde",    assets_dir / "CCR_A TODA MARCHA.pptx")]
 
-    if rol in ("counseling", "compass-directo"):
-        return [
-            ("estudiante", assets_dir / "Template_Autoconocimiento 2.0 (counseling).pptx"),
-            ("padres",     assets_dir / "Template_Autoconocimiento 2.0 (Padres - Counseling).pptx"),
-        ]
-    elif rol == "Rojo":
-        return [("ccr_rojo",     assets_dir / "CCR_EN BOXES.pptx")]
-    elif rol == "Amarillo":
-        return [("ccr_amarillo", assets_dir / "CCR_CALENTANDO MOTORES.pptx")]
-    elif rol == "Verde":
-        return [("ccr_verde",    assets_dir / "CCR_A TODA MARCHA.pptx")]
-    elif rol == "autoconfianza":
-        return [("autoconfianza", assets_dir / "autoconfianza.pptx")]
-    elif rol == "como decidir":
-        return [("como decidir",  assets_dir / "como_decidir.pptx")]
-    elif rol == "desempatador":
-        return [("desempatador",  assets_dir / "desempatador.pptx")]
-    elif rol == "contexto":
-        return [("contexto", assets_dir / "template_tu_contexto.pptx")]
-    elif rol == "UTP":
-        return [("estudiante", assets_dir / "template_utp_alumnos.pptx"),
-                ("padres", assets_dir / "template_utp_padres.pptx")
-            ]
-    else:
-        return [
-            ("estudiante", assets_dir / "Template_Autoconocimiento 2.0 (completo).pptx"),
-            ("padres",     assets_dir / "Template_Autoconocimiento 2.0 (PADRES).pptx"),
-        ]
+    # # nuevos cuestionarios agosto 2026
+    # elif rol == "contexto":
+    #     return [("contexto", assets_dir / "template_tu_contexto.pptx")]
+    
+    # elif rol == "proposito":
+    #         return [("proposito", assets_dir / "template_tu_proposito.pptx")]
+    
+    # elif rol == "autoconfianza":
+    #         return [("autoconfianza", assets_dir / "template_autoconfianza.pptx")]
+    
+    # elif rol == "desempatador":
+    #             return [("desempatador",  assets_dir / "template_desempatador.pptx")]
+
+    # elif rol == "que_estudiar":
+    #                 return [("que_estudiar",  assets_dir / "template_que_estudiar.pptx")]
+    
+    # elif rol == "donde_estudiar":
+    #                     return [("donde_estudiar",  assets_dir / "template_donde_estudiar.pptx")]
+
+    # elif rol == "como_decidir":
+    #             return [("como_decidir",  assets_dir / "template_como_decidir.pptx")]
+            
+    # elif rol == "lupita":
+    #             return [("lupita",  assets_dir / "template_lupita.pptx")]
+
+    # elif rol == "islas":
+    #                     return [("islas",  assets_dir / "template_islas_identidad.pptx")]
+
+    # elif rol == "mi_identidad":
+    #                 return [("mi_identidad",  assets_dir / "template_mi_identidad.pptx")]
+
+    # elif rol == "UTP":
+    #     return [("estudiante", assets_dir / "template_utp_alumnos.pptx"),
+    #             ("padres", assets_dir / "template_utp_padres.pptx")
+    #         ]
+    # else:
+    #     return [
+    #         ("estudiante", assets_dir / "Template_Autoconocimiento 2.0 (completo).pptx"),
+    #         ("padres",     assets_dir / "Template_Autoconocimiento 2.0 (PADRES).pptx"),
+    #     ]
 
 def map_placeholders(student: dict) -> dict:
     return {f"<<{k}>>": v for k, v in student.items()}

@@ -279,13 +279,12 @@ def send_utp_student_email(cedula: str, reporte_url: str) -> None:
         if response.status_code >= 400:
           logger.error("❌ UTP student email failed — status %s", response.status_code)
 
-        else:
           sg_message_id = response.headers.get("X-Message-Id")
-          logger.info("😈 sg_message_id: %s", sg_message_id)
           if sg_message_id:
               write_sg_message_id(user_email=cedula, sg_message_id=sg_message_id)
           else: 
               logger.warning("No X-Message-Id in SendGrid response for %s", to_email)
+        else:
           logger.info("✅ UTP student email sent to %s", to_email)
     except Exception as e:
         logger.error("❌ UTP student email error — %s | body=%s", e, getattr(e, 'body', None))

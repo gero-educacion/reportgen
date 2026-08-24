@@ -255,3 +255,37 @@ def post_utp_payload(
         except Exception:
             pass
         logger.exception("⚠️  UTP endpoint post failed (non-fatal)")
+
+
+def write_sg_message_id(user_email: str, sg_message_id: str):
+    """
+    Called by reportgen right after sending the UTP student email.
+    Stamps sg_message_id + initial email_status="Enviado" onto the most
+    recent row for this email. This is the ONLY write that matches by email —
+    everything after this matches by sg_message_id instead, to avoid stamping
+    the wrong row if the student gets reprocessed later.
+    """
+    from datetime import date
+
+    sql = """
+        UPDATE byw_tracking_algoritmo_AC
+        SET    sg_message_id = %s,
+               email_status = %s,
+               email_status_updated_at = %s
+        WHERE  LOWER(email) = LOWER(%s)
+        ORDER  BY response_at DESC
+        LIMIT  1
+    """
+    try:
+        conn = _get_connection()
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (sg_message_id, "Enviado", date.today(), user_email))
+                rows_affected = cur.rowcount
+            conn.commit()
+        if rows_affected == 0:
+            logger.warning("write_sg_message_id: no row found for email=%s", user_email)
+        else:
+            logger.info("✅ sg_message_id=%s written for %s", sg_message_id, user_email)
+    except Exception:
+        logger.exception("⚠️  Failed to write sg_message_id for %s (non-fatal)", user_email)

@@ -46,8 +46,12 @@ HEADERS = [
     "Drive upload?",        # L
     "SiteGround upload?",   # M
     "Error",                # N
+    "Legacy Links (JSON)",   # ← new, appended at the end
 ]
 TOTAL_COLS = len(HEADERS)
+
+
+LEGACY_EXCLUDE = {"estudiante", "padres", "ccr_rojo", "ccr_amarillo", "ccr_verde"}
 
 
 def get_sheets_service():
@@ -133,6 +137,9 @@ def _build_row(
     rol   = student.get("Rol", "")
     links = drive_links or {}
 
+    legacy_links = {k: v for k, v in links.items() if k not in LEGACY_EXCLUDE}
+    legacy_json  = json.dumps(legacy_links, ensure_ascii=False) if legacy_links else ""
+
     return [
         now,
         student_id,
@@ -148,6 +155,8 @@ def _build_row(
         drive_uploaded,
         siteground_uploaded,
         error_msg or "",
+        legacy_json,   # ← appended at the end, matches HEADERS
+
     ]
 
 

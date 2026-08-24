@@ -14,29 +14,15 @@ from app.pipeline.sheets_updater import update_student_status
 from app.pipeline.student_historic import get_all_links, upsert_student
 from app.pipeline.db_writer import write_majors_to_db, post_utp_payload, alter_table_reports
 from app.pipeline.historic_db_writer import upsert_historico
+from app.pipeline.job_config import (
+    get_report_filenames, get_report_titles, get_all_report_filenames,
+    get_drive_folder, is_utp_role, should_write_majors, get_report_description,
+)
 
 logger = logging.getLogger("reportgen.tasks")
 
 APP_TMP_DIR = Path("/app/tmp/jobs")
 APP_TMP_DIR.mkdir(parents=True, exist_ok=True)
-
-UTP_ROLES = {"UTP"}
-
-REPORT_TITLES = {
-    "estudiante":   'Reporte "Autoconocimiento"',
-    "padres":       'Reporte "Autoconocimiento versión padres"',
-    "ccr_rojo":     "CCR EN BOXES",
-    "ccr_amarillo": "CCR CALENTANDO MOTORES",
-    "ccr_verde":    "CCR A TODA MARCHA",
-}
-
-REPORT_FILENAMES = {
-    "estudiante":   "Reporte_Autoconocimiento.pdf",
-    "padres":       "Reporte_Autoconocimiento_Padres.pdf",
-    "ccr_rojo":     "CCR_En_Boxes.pdf",
-    "ccr_amarillo": "CCR_Calentando_Motores.pdf",
-    "ccr_verde":    "CCR_A_Toda_Marcha.pdf",
-}
 
 
 def safe_filename(text: str) -> str:
@@ -65,7 +51,8 @@ def process_report_job(job: dict):
         or student_id
     )
     rol        = job.get("Rol", "")
-    is_utp     = rol in UTP_ROLES
+    is_utp     = is_utp_role(rol)
+    report_titles = get_report_titles(rol)
 
     flag_send_email      = job.get("send_email",      True)
     flag_upload_drive    = job.get("upload_drive",    True)
@@ -91,8 +78,9 @@ def process_report_job(job: dict):
             if flag_send_email:
                 downloaded_pdfs = []
                 failed_types    = []
+                all_filenames = get_all_report_filenames()
                 for report_type, drive_link in historic_links.items():
-                    filename = REPORT_FILENAMES.get(report_type, f"{report_type}.pdf")
+                    filename = all_filenames.get(report_type, f"{report_type}.pdf")
                     try:
                         downloaded_pdfs.append(download_drive_file(drive_link, filename))
                     except Exception:
@@ -142,7 +130,7 @@ def process_report_job(job: dict):
     # ---------------------------------------------------------------
     # WRITE MAJORS TO DB
     # ---------------------------------------------------------------
-    if rol not in {"Verde", "Rojo", "Amarillo"}:
+    if should_write_majors(rol):
         try:
             write_majors_to_db(job)
         except Exception:
@@ -204,16 +192,12 @@ def process_report_job(job: dict):
     else:
         if flag_upload_drive:
             for report_type, pdf_path in reports.items():
-                post_title = REPORT_TITLES.get(report_type)
+                post_title = report_titles.get(report_type)
                 if not post_title:
                     continue
-                if report_type.startswith("ccr"):
-                    folder_id = os.environ.get("DRIVE_FOLDER_CCR")
-                elif report_type == "estudiante":
-                    folder_id = os.environ.get("DRIVE_FOLDER_AUTO_EST")
-                elif report_type == "padres":
-                    folder_id = os.environ.get("DRIVE_FOLDER_AUTO_PAD")
-                else:
+                folder_id = get_drive_folder(rol, report_type)
+                if not folder_id:
+                    logger.warning("⚠️  No Drive folder configured for rol=%s report_type=%s", rol, report_type)
                     continue
 
                 filename = f"{safe_filename(name)}_{report_type}_{student_id}.pdf"
@@ -231,11 +215,12 @@ def process_report_job(job: dict):
         if flag_post_siteground and drive_links:
             sg_ok = 0
             for report_type, drive_link in drive_links.items():
-                post_title = REPORT_TITLES.get(report_type)
+                post_title = report_titles.get(report_type)
                 if not post_title:
                     continue
+                description = get_report_description(rol, report_type)
                 try:
-                    send_report_to_siteground(email=email, drive_link=drive_link, post_title=post_title)
+                    send_report_to_siteground(email=email, drive_link=drive_link, post_title=post_title, description=description)
                     sg_ok += 1
                 except Exception:
                     logger.exception("⚠️  SiteGround failed for %s", report_type)

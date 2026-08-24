@@ -4,6 +4,7 @@ from pathlib import Path
 import logging
 
 from app.queue import enqueue_report, get_job_status
+from app.pipeline.job_config import role_is_ready
 
 logging.basicConfig(
     level=logging.INFO,
@@ -38,9 +39,14 @@ def health():
 def run_student(job: dict):
     student_id = job.get("student_id")
     job_id     = job.get("job_id") or student_id
+    rol = job.get("Rol") or ""
 
     if not student_id or not job_id:
         raise HTTPException(status_code=400, detail="Missing student_id or job_id")
+
+    ready, problems = role_is_ready(rol)
+    if not ready:
+        raise HTTPException(status_code=422, detail=f"Role '{rol}' not ready: {problems}")
 
     try:
         rq_job_id = enqueue_report(job)

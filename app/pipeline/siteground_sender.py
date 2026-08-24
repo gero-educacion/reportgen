@@ -36,21 +36,6 @@ from pathlib import Path, PurePosixPath
 
 logger = logging.getLogger(__name__)
 
-REPORT_DESCRIPTIONS = {
-    'Reporte "Autoconocimiento"': (
-        "Tu Guía de Orientación Vocacional, incluye información sobre tu personalidad, "
-        "intereses, habilidades e hipótesis de carrera que te recomendamos explorar."
-    ),
-    'Reporte "Autoconocimiento versión padres"': (
-        "Los resultados obtenidos en autoconocimiento para que puedas compartirlo con tus padres. "
-        "No te preocupes, la información es la misma que recibiste tú!"
-    ),
-    "CCR EN BOXES": "",
-    "CCR CALENTANDO MOTORES": "",
-    "CCR A TODA MARCHA": "",
-}
-
-
 # ---------------------------------------------------------------------------
 # SFTP upload
 # ---------------------------------------------------------------------------
@@ -104,6 +89,7 @@ def send_report_to_siteground(
     email: str,
     drive_link: str,
     post_title: str,
+    description: str = ""
 ):
     logger.info("🌐 Sending to SiteGround | email=%s | title=%s", email, post_title)
 
@@ -115,7 +101,7 @@ def send_report_to_siteground(
 
     endpoint = endpoint.strip().strip('"')
 
-    descripcion_reporte = REPORT_DESCRIPTIONS.get(post_title, "")
+    descripcion_reporte = description
 
     payload = {
         "post_title":          post_title,

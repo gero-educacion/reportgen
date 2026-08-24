@@ -3,14 +3,8 @@ from app.pipeline.data_processing import process_student_data
 from app.pipeline.chartgen import generate_graph, generate_graph_utp
 from app.pipeline.build_pptx import determine_template, generate_report
 from app.pipeline.conversion_pdfs import convert_to_pdf
+from app.pipeline.job_config import needs_full_pipeline, chart_style, ASSETS_DIR
 # from .email_sender import send_email
-
-PIPELINE_COMPLETO = {
-    "counseling",
-    "compass-directo",
-    "gs_actividades",
-    "UTP",
-}
 
 def run_student_pipeline(job: dict, job_dir: Path):
     """
@@ -18,7 +12,6 @@ def run_student_pipeline(job: dict, job_dir: Path):
         - los del CCR no requieren nada en especial (e.g. procesamiento de datos, charts, etc)
         - los de AC requieren todo so let's go
     """
-    assets_dir = Path("/app/assets")
     rol = job.get("Rol")
 
     name  = (
@@ -32,16 +25,15 @@ def run_student_pipeline(job: dict, job_dir: Path):
     print("their role is ", rol)
 
     # flujo completo para los de AC
-    if rol in PIPELINE_COMPLETO:
+    if needs_full_pipeline(rol):
         print("they requiere a complete pipeline")
-        student = process_student_data(job, assets_dir)
+        student = process_student_data(job, ASSETS_DIR)
+        chart_path = job_dir / "chart.png"
 
-        if rol == "UTP":
-            chart_path = job_dir / "chart.png"
+        if chart_style(rol) == "utp":
             generate_graph_utp(student, chart_path)
             
         else:
-            chart_path = job_dir / "chart.png"
             generate_graph(student, chart_path)
 
     # flujo de chill para los del CCR
@@ -51,7 +43,7 @@ def run_student_pipeline(job: dict, job_dir: Path):
         chart_path = None
 
     # todo el resto se comparte so just do that
-    templates = determine_template(student, assets_dir)
+    templates = determine_template(student, ASSETS_DIR)
     print("templates determined: ", templates)
 
     pdf_paths: list[Path] = []
