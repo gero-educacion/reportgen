@@ -289,3 +289,75 @@ def write_sg_message_id(user_email: str, sg_message_id: str):
             logger.info("✅ sg_message_id=%s written for %s", sg_message_id, user_email)
     except Exception:
         logger.exception("⚠️  Failed to write sg_message_id for %s (non-fatal)", user_email)
+
+
+# Rank covers both raw webhook event names and Activity API status
+# values, since some historic code paths use the latter.
+EMAIL_STATUS_RANK = {
+    'Enviado':      -1,
+    'processed':     0,
+    'deferred':      0,
+    'delivered':     1,
+    'open':          1,
+    'click':         1,
+    'not_delivered': 2,
+    'bounce':        2,
+    'blocked':       2,
+    'dropped':       2,
+    'invalid':       2,
+    'spamreport':    2,
+    'unsubscribe':   2,
+    'group_unsubscribe': 2,
+}
+
+# Events that mean "this needs a resend" — same tier the PHP poller used
+# for 'not_delivered'.
+BOUNCE_TRIGGER_EVENTS = {'bounce', 'blocked', 'dropped'}
+
+MAX_RESEND_ATTEMPTS = 2
+
+
+def update_email_status_by_sg_message_id(sg_message_id: str, event: str) -> dict | None:
+    """
+    Called by the SendGrid webhook. Matches on sg_message_id (stripped to
+    its base form, same as everywhere else in this system), applies the
+    rank-guarded update, and returns the row's current state so the caller
+    can decide whether to trigger a resend.
+    Returns None if no matching row or event unknown/lower-ranked.
+    """
+    base_id = sg_message_id.split('.')[0]
+    new_rank = EMAIL_STATUS_RANK.get(event)
+    if new_rank is None:
+        logger.warning("Unknown webhook event '%s' for sg_message_id=%s, ignoring", event, base_id)
+        return None
+
+    try:
+        conn = _get_connection()
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT email, email_status, resend_count, reporte_estudiante, reporte_padres "
+                    "FROM byw_tracking_algoritmo_AC WHERE sg_message_id = %s LIMIT 1",
+                    (base_id,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    logger.warning("No row found for sg_message_id=%s (event=%s)", base_id, event)
+                    return None
+
+                current_rank = EMAIL_STATUS_RANK.get(row["email_status"], -1)
+                if new_rank < current_rank:
+                    return None  
+
+                cur.execute(
+                    "UPDATE byw_tracking_algoritmo_AC "
+                    "SET email_status = %s, email_status_updated_at = CURDATE() "
+                    "WHERE sg_message_id = %s",
+                    (event, base_id),
+                )
+            conn.commit()
+        logger.info("✅ webhook: sg_message_id=%s %s → %s", base_id, row["email_status"], event)
+        return row  # cedula (row["email"]), resend_count, reporte_estudiante, reporte_padres
+    except Exception:
+        logger.exception("⚠️  Failed to update status for sg_message_id=%s", base_id)
+        return None
