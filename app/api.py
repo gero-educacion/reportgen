@@ -1,11 +1,10 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from datetime import datetime, timezone
 from pathlib import Path
 import logging
 import json
-from sendgrid.helpers.eventwebhook import EventWebhook
 import os
-from requests import Request
+from sendgrid.helpers.eventwebhook import EventWebhook
 
 from app.queue import enqueue_report, get_job_status
 from app.pipeline.job_config import role_is_ready
