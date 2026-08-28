@@ -1,5 +1,4 @@
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor
 from app.pipeline.data_processing import process_student_data
 from app.pipeline.chartgen import generate_graph, generate_graph_utp
 from app.pipeline.build_pptx import determine_template, generate_report
@@ -47,11 +46,9 @@ def run_student_pipeline(job: dict, job_dir: Path):
     templates = determine_template(student, ASSETS_DIR)
     print("templates determined: ", templates)
 
-    report_types: list[str] = []
-    pptx_paths: list[Path] = []
     pdf_paths: list[Path] = []
+    report_types: list[str] = []
 
-    # build all PPTX first (cheap, CPU-only)
     for suffix, template_path in templates:
         pptx_path = job_dir / f"report_{suffix}.pptx"
         pdf_path  = job_dir / f"report_{suffix}.pdf"
@@ -63,19 +60,9 @@ def run_student_pipeline(job: dict, job_dir: Path):
             output_pptx_path=pptx_path,
         )
 
-        report_types.append(suffix)
-        pptx_paths.append(pptx_path)
-        pdf_paths.append(pdf_path)
+        convert_to_pdf(pptx_path, pdf_path)
 
-    # then convert them to PDF concurrently — each is a blocking Gotenberg
-    # HTTP call, so this overlaps the wait instead of doing it one at a time
-    if templates:
-        with ThreadPoolExecutor(max_workers=len(templates)) as executor:
-            futures = [
-                executor.submit(convert_to_pdf, pptx_path, pdf_path)
-                for pptx_path, pdf_path in zip(pptx_paths, pdf_paths)
-            ]
-            for future in futures:
-                future.result()  # re-raises on first failure, same as before
+        pdf_paths.append(pdf_path)
+        report_types.append(suffix)
 
     return pdf_paths, report_types

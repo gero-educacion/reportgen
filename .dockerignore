@@ -6,5 +6,3 @@ credentials.env
 tmp/
 node_modules
 .env
-.dockerignore
-test_payload.ipynb
