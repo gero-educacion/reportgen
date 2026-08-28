@@ -14,6 +14,7 @@ from sendgrid.helpers.mail import (
 )
 import logging
 from app.pipeline.db_writer import write_sg_message_id
+from app.pipeline.db import get_connection
 
 logger = logging.getLogger(__name__)
 
@@ -143,9 +144,6 @@ def _get_student_contact(cedula: str) -> dict | None:
     matching cedula_matricula = cedula.
     Returns a dict with keys nombre, apellido, email or None if not found.
     """
-    import pymysql
-    import pymysql.cursors
-
     sql = """
         SELECT nombre, apellido, email
         FROM byw_usuarios_habilitados
@@ -154,16 +152,7 @@ def _get_student_contact(cedula: str) -> dict | None:
         LIMIT 1
     """
     try:
-        conn = pymysql.connect(
-            host=os.environ["DB_HOST"],
-            port=int(os.environ.get("DB_PORT", 3306)),
-            user=os.environ["DB_USER"],
-            password=os.environ["DB_PASSWORD"],
-            database=os.environ["DB_NAME"],
-            charset="utf8mb4",
-            cursorclass=pymysql.cursors.DictCursor,
-            connect_timeout=10,
-        )
+        conn = get_connection()
         with conn:
             with conn.cursor() as cur:
                 cur.execute(sql, (cedula,))

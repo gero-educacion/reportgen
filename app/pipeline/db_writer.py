@@ -26,27 +26,10 @@ Required env vars (UTP endpoint):
 import os
 import logging
 import requests
-import pymysql
-import pymysql.cursors
+
+from app.pipeline.db import get_connection as _get_connection
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# MySQL
-# ---------------------------------------------------------------------------
-
-def _get_connection() -> pymysql.Connection:
-    return pymysql.connect(
-        host            = os.environ["DB_HOST"],
-        port            = int(os.environ.get("DB_PORT", 3306)),
-        user            = os.environ["DB_USER"],
-        password        = os.environ["DB_PASSWORD"],
-        database        = os.environ["DB_NAME"],
-        charset         = "utf8mb4",
-        cursorclass     = pymysql.cursors.DictCursor,
-        connect_timeout = 10,
-    )
 
 
 # def _get_lead_id(email: str) -> str | None:

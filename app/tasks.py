@@ -3,11 +3,12 @@ import json
 import logging
 import traceback
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from app.pipeline.run_student_pipeline import run_student_pipeline
 from app.pipeline.build_pptx import determine_template
 from app.pipeline.email_sender import send_report_email
-from app.pipeline.drive_uploader import upload_pdf_to_drive, upsert_json_to_drive
+from app.pipeline.drive_uploader import upload_pdf_to_drive, upsert_json_to_drive, get_drive_service
 from app.pipeline.drive_downloader import download_drive_file
 from app.pipeline.siteground_sender import send_report_to_siteground, upload_pdf_to_siteground
 from app.pipeline.sheets_updater import update_student_status
@@ -33,6 +34,26 @@ def safe_filename(text: str) -> str:
     text = re.sub(r"\s+", "_", text)
     text = re.sub(r"[^a-z0-9_\-\.]", "", text)
     return text
+
+
+def _run_concurrent(jobs: dict, on_error: str) -> dict:
+    """
+    Runs each zero-arg callable in `jobs` (keyed by report_type) concurrently.
+    A failure is logged and that key is simply left out of the result dict —
+    same non-fatal-per-report behavior as the old sequential try/except loops.
+    """
+    results = {}
+    if not jobs:
+        return results
+    with ThreadPoolExecutor(max_workers=len(jobs)) as executor:
+        future_to_key = {executor.submit(fn): key for key, fn in jobs.items()}
+        for future in as_completed(future_to_key):
+            key = future_to_key[future]
+            try:
+                results[key] = future.result()
+            except Exception:
+                logger.exception("⚠️  %s failed for %s", on_error, key)
+    return results
 
 
 def process_report_job(job: dict):
@@ -79,10 +100,11 @@ def process_report_job(job: dict):
                 downloaded_pdfs = []
                 failed_types    = []
                 all_filenames = get_all_report_filenames()
+                drive_service = get_drive_service()  # reused for every download below
                 for report_type, drive_link in historic_links.items():
                     filename = all_filenames.get(report_type, f"{report_type}.pdf")
                     try:
-                        downloaded_pdfs.append(download_drive_file(drive_link, filename))
+                        downloaded_pdfs.append(download_drive_file(drive_link, filename, service=drive_service))
                     except Exception:
                         failed_types.append(report_type)
 
@@ -158,12 +180,15 @@ def process_report_job(job: dict):
         if user_email:
             logger.exception("the user email is %s", user_email)
 
-        for report_type, pdf_path in reports.items():
-            filename = f"{safe_filename(name)}_{report_type}_{student_id}.pdf"
-            try:
-                sg_file_links[report_type] = upload_pdf_to_siteground(pdf_path, filename)
-            except Exception:
-                logger.exception("⚠️  SiteGround upload failed for %s", report_type)
+        upload_jobs = {
+            report_type: (
+                lambda p=pdf_path, t=report_type: upload_pdf_to_siteground(
+                    p, f"{safe_filename(name)}_{t}_{student_id}.pdf"
+                )
+            )
+            for report_type, pdf_path in reports.items()
+        }
+        sg_file_links = _run_concurrent(upload_jobs, on_error="SiteGround upload")
 
         if sg_file_links and user_email:
             try:
@@ -191,6 +216,7 @@ def process_report_job(job: dict):
     # ---------------------------------------------------------------
     else:
         if flag_upload_drive:
+            upload_jobs = {}
             for report_type, pdf_path in reports.items():
                 post_title = report_titles.get(report_type)
                 if not post_title:
@@ -201,30 +227,31 @@ def process_report_job(job: dict):
                     continue
 
                 filename = f"{safe_filename(name)}_{report_type}_{student_id}.pdf"
-                try:
-                    drive_links[report_type] = upload_pdf_to_drive(
-                        pdf_path=pdf_path, target_folder_id=folder_id, filename=filename
+                upload_jobs[report_type] = (
+                    lambda p=pdf_path, f=folder_id, fn=filename: upload_pdf_to_drive(
+                        pdf_path=p, target_folder_id=f, filename=fn
                     )
-                except Exception:
-                    logger.exception("⚠️  Drive upload failed for %s", report_type)
+                )
 
+            drive_links = _run_concurrent(upload_jobs, on_error="Drive upload")
             drive_uploaded = "yes" if drive_links else "no"
         else:
             drive_uploaded = "skipped"
 
         if flag_post_siteground and drive_links:
-            sg_ok = 0
+            sg_jobs = {}
             for report_type, drive_link in drive_links.items():
                 post_title = report_titles.get(report_type)
                 if not post_title:
                     continue
                 description = get_report_description(rol, report_type)
-                try:
-                    send_report_to_siteground(email=email, drive_link=drive_link, post_title=post_title, description=description)
-                    sg_ok += 1
-                except Exception:
-                    logger.exception("⚠️  SiteGround failed for %s", report_type)
-            sg_uploaded = "yes" if sg_ok else "no"
+                sg_jobs[report_type] = (
+                    lambda e=email, dl=drive_link, pt=post_title, d=description: send_report_to_siteground(
+                        email=e, drive_link=dl, post_title=pt, description=d
+                    )
+                )
+            sg_results = _run_concurrent(sg_jobs, on_error="SiteGround")
+            sg_uploaded = "yes" if sg_results else "no"
         else:
             sg_uploaded = "skipped"
 
