@@ -11,3 +11,4 @@ prueba.ipynb
 test_payload.ipynb
 mock_payloads.txt
 docker-compose.local-test.yml
+test_payload_local.py
