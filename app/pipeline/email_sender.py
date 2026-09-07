@@ -20,6 +20,21 @@ logger = logging.getLogger(__name__)
 
 CC_ADDRESS = "operaciones@geroeducacion.com"
 
+
+def _no_reply_address(existing_from_env: str, default_domain: str) -> str:
+    """
+    Returns "no-reply@<domain of existing_from_env's address>", falling back
+    to "no-reply@<default_domain>" if that env var is unset.
+
+    NOTE: requires SendGrid *domain authentication* (CNAME/SPF/DKIM records)
+    on that domain rather than "Single Sender Verification" of one specific
+    mailbox — otherwise this address must be verified in the SendGrid
+    dashboard first or sends will fail with a 403.
+    """
+    existing = os.environ.get(existing_from_env, "")
+    domain = existing.split("@")[-1].strip() if "@" in existing else ""
+    return f"no-reply@{domain or default_domain}"
+
 # def _logo_src() -> str:
 #     logo_path = Path("/app/assets") / "utp-logo.png" 
 #     if not logo_path.exists():
@@ -211,6 +226,10 @@ def build_utp_student_email_html(nombre: str, apellido: str, reporte_url: str) -
               </p>
               <p style="font-family: Calibri, sans-serif; font-size: 16px; color: #222222; line-height: 1.6;">Test Vocacional UTP</p>
 
+              <p style="font-family: Calibri, sans-serif; font-size: 11px; color: #999999; line-height: 1.4; margin-top: 24px;">
+                Este es un mensaje automático — por favor no respondas a este correo.
+              </p>
+
             </td>
           </tr>
           <tr>
@@ -228,7 +247,7 @@ def build_utp_student_email_html(nombre: str, apellido: str, reporte_url: str) -
 </html>"""
 
 
-def send_utp_student_email(cedula: str, reporte_url: str) -> None:
+def send_utp_student_email(cedula: str, reporte_url: str, is_resend: bool = False) -> None:
     """
     Sends the UTP student report email.
     Looks up nombre, apellido and email from byw_usuarios_habilitados by cedula_matricula.
@@ -252,16 +271,23 @@ def send_utp_student_email(cedula: str, reporte_url: str) -> None:
 
     sg = SendGridAPIClient(os.environ.get("SENDGRID_API_KEY"))
 
+    no_reply_address = _no_reply_address(
+        existing_from_env="SENDGRID_FROM_UTP",
+        default_domain="vocacional.utp.edu.pe",
+    )
+
     message = Mail(
-        from_email=(os.environ.get("SENDGRID_FROM_UTP"), "Test Vocacional UTP"),
+        from_email=(no_reply_address, "Test Vocacional UTP"),
         to_emails=to_email,
         subject='🔴 UTP | Tu perfil vocacional está listo',
         html_content=build_utp_student_email_html(nombre, apellido, reporte_url),
     )
-    message.reply_to = CC_ADDRESS
+    # No-reply: replies land on the sending address itself (unmonitored),
+    # not on operaciones@. Ops still gets a copy via BCC below.
+    message.reply_to = no_reply_address
     message.bcc = [Bcc(CC_ADDRESS)]
 
-    logger.info("📧 Sending UTP student email to %s for cedula=%s", to_email, cedula)
+    logger.info("📧 Sending UTP student email to %s for cedula=%s (resend=%s)", to_email, cedula, is_resend)
 
     try:
         response = sg.send(message)
