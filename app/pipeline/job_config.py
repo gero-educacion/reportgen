@@ -328,6 +328,21 @@ ROLE_CONFIGS: dict = {
             }
         ],
     },
+    "peer_mentoring_v1": {
+            "pipeline": "chill",       
+            "is_utp": False,
+            "write_majors": False,     
+            "reports": [
+                {
+                    "suffix": "peer_mentoring_v1",
+                    "template": "template_peer_mentoring.pptx",
+                    "title": 'Reporte "Peer Mentoring"',
+                    "filename": "peer_mentoring.pdf",
+                    "drive_folder_env": "DRIVE_FOLDER_PEER_MENTORING",
+                    "description": 'Este reporte contiene los resultados de tu participación en las actividades de "Peer Mentoring"'
+                }
+            ],
+    },
 
     "_default": {
         "pipeline": "full",
