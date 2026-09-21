@@ -1,0 +1,13 @@
+# Custom Gotenberg image with the report templates' fonts baked in.
+#
+# The stock gotenberg/gotenberg image has no idea about Formular or
+# TT Squares Black, so LibreOffice inside it silently falls back to a
+# substitute font for any text using them. Extending the image with
+# these fonts fixes rendering to match what the templates actually
+# expect.
+FROM gotenberg/gotenberg:8
+
+USER root
+COPY assets/fonts/ /usr/share/fonts/custom/
+RUN fc-cache -f -v
+USER gotenberg

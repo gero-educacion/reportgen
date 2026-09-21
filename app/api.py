@@ -116,9 +116,10 @@ async def sendgrid_webhook(request: Request):
             elif not reporte_url:
                 logger.warning("cedula=%s bounced but no reporte_estudiante URL stored, cannot resend", cedula)
             else:
-                logger.info("🔁 Resending for cedula=%s (attempt %s/%s)", cedula, resend_count + 1, MAX_RESEND_ATTEMPTS)
+                resend_count += 1
+                logger.info("🔁 Resending for cedula=%s (attempt %s/%s)", cedula, resend_count, MAX_RESEND_ATTEMPTS)
                 try:
-                    send_utp_student_email(cedula=cedula, reporte_url=reporte_url, is_resend=True)
+                    send_utp_student_email(cedula=cedula, reporte_url=reporte_url, is_resend=True, sg_message_id=sg_message_id)
                 except Exception:
                     logger.exception("Resend failed for cedula=%s", cedula)
 

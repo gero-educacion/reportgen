@@ -13,7 +13,7 @@ from sendgrid.helpers.mail import (
     Bcc,
 )
 import logging
-from app.pipeline.db_writer import write_sg_message_id
+from app.pipeline.db_writer import write_sg_message_id, update_resend_count_by_sg_message_id
 from app.pipeline.db import get_connection
 
 logger = logging.getLogger(__name__)
@@ -247,10 +247,15 @@ def build_utp_student_email_html(nombre: str, apellido: str, reporte_url: str) -
 </html>"""
 
 
-def send_utp_student_email(cedula: str, reporte_url: str, is_resend: bool = False) -> None:
+def send_utp_student_email(cedula: str, reporte_url: str, is_resend: bool = False, sg_message_id: str = None) -> None:
     """
     Sends the UTP student report email.
     Looks up nombre, apellido and email from byw_usuarios_habilitados by cedula_matricula.
+
+    For a resend (is_resend=True), sg_message_id identifies the ORIGINAL
+    bounced message whose resend_count should be incremented — kept under
+    this name deliberately, since the send below produces a brand-new
+    message ID that must not overwrite it before the increment happens.
     """
     if not reporte_url:
         logger.warning("send_utp_student_email: missing reporte_url, skipping")
@@ -295,12 +300,16 @@ def send_utp_student_email(cedula: str, reporte_url: str, is_resend: bool = Fals
           logger.error("❌ UTP student email failed — status %s", response.status_code)
 
         else:
-          sg_message_id = response.headers.get("X-Message-Id")
-          logger.info("😈 sg_message_id: %s", sg_message_id)
-          if sg_message_id:
-              write_sg_message_id(user_email=cedula, sg_message_id=sg_message_id)
-          else: 
+          new_sg_message_id = response.headers.get("X-Message-Id")
+          logger.info("😈 sg_message_id: %s", new_sg_message_id)
+          if new_sg_message_id:
+              write_sg_message_id(user_email=cedula, sg_message_id=new_sg_message_id)
+          else:
               logger.warning("No X-Message-Id in SendGrid response for %s", to_email)
+
+          if is_resend and sg_message_id:
+              update_resend_count_by_sg_message_id(sg_message_id)
+
           logger.info("✅ UTP student email sent to %s", to_email)
     except Exception as e:
         logger.error("❌ UTP student email error — %s | body=%s", e, getattr(e, 'body', None))

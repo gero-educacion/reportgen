@@ -58,6 +58,30 @@ logger = logging.getLogger(__name__)
 #         logger.exception("⚠️  Failed to look up lead_id for %s", email)
 #         return None
 
+def update_resend_count_by_sg_message_id(sg_message_id: str) -> None:
+    """
+    Atomically increments resend_count for the row matching this
+    sg_message_id. SQL owns the increment (no read-then-write from
+    Python), so there's no way for a caller to double-count it.
+    """
+    sql = """
+        UPDATE byw_tracking_algoritmo_AC
+        SET    resend_count = resend_count + 1
+        WHERE  sg_message_id = %s
+    """
+    try:
+        conn = _get_connection()
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (sg_message_id,))
+                rows_affected = cur.rowcount
+            conn.commit()
+        if rows_affected == 0:
+            logger.warning("update_resend_count_by_sg_message_id: no row found for sg_message_id=%s", sg_message_id)
+        else:
+            logger.info("✅ resend_count incremented for sg_message_id=%s", sg_message_id)
+    except Exception:
+        logger.exception("⚠️ Failed to increment resend_count for sg_message_id=%s (non-fatal)", sg_message_id)
 
 def _write_validation_id(email: str, validation_id: str):
     """
