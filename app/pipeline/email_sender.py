@@ -300,15 +300,14 @@ def send_utp_student_email(cedula: str, reporte_url: str, is_resend: bool = Fals
           logger.error("❌ UTP student email failed — status %s", response.status_code)
 
         else:
+          if is_resend and sg_message_id:
+            update_resend_count_by_sg_message_id(sg_message_id)  
           new_sg_message_id = response.headers.get("X-Message-Id")
           logger.info("😈 sg_message_id: %s", new_sg_message_id)
           if new_sg_message_id:
               write_sg_message_id(user_email=cedula, sg_message_id=new_sg_message_id)
           else:
               logger.warning("No X-Message-Id in SendGrid response for %s", to_email)
-
-          if is_resend and sg_message_id:
-              update_resend_count_by_sg_message_id(sg_message_id)
 
           logger.info("✅ UTP student email sent to %s", to_email)
     except Exception as e:
