@@ -63,7 +63,14 @@ def update_resend_count_by_sg_message_id(sg_message_id: str) -> None:
     Atomically increments resend_count for the row matching this
     sg_message_id. SQL owns the increment (no read-then-write from
     Python), so there's no way for a caller to double-count it.
+
+    Strips to base_id the same way update_email_status_by_sg_message_id
+    does — a raw webhook sg_message_id carries a ".filterdrecv-..." suffix
+    that the DB never stores (write_sg_message_id writes the plain
+    X-Message-Id header, which has no suffix), so matching on the raw
+    value silently updates zero rows.
     """
+    base_id = sg_message_id.split('.')[0]
     sql = """
         UPDATE byw_tracking_algoritmo_AC
         SET    resend_count = resend_count + 1
@@ -73,15 +80,15 @@ def update_resend_count_by_sg_message_id(sg_message_id: str) -> None:
         conn = _get_connection()
         with conn:
             with conn.cursor() as cur:
-                cur.execute(sql, (sg_message_id,))
+                cur.execute(sql, (base_id,))
                 rows_affected = cur.rowcount
             conn.commit()
         if rows_affected == 0:
-            logger.warning("update_resend_count_by_sg_message_id: no row found for sg_message_id=%s", sg_message_id)
+            logger.warning("update_resend_count_by_sg_message_id: no row found for sg_message_id=%s", base_id)
         else:
-            logger.info("✅ resend_count incremented for sg_message_id=%s", sg_message_id)
+            logger.info("✅ resend_count incremented for sg_message_id=%s", base_id)
     except Exception:
-        logger.exception("⚠️ Failed to increment resend_count for sg_message_id=%s (non-fatal)", sg_message_id)
+        logger.exception("⚠️ Failed to increment resend_count for sg_message_id=%s (non-fatal)", base_id)
 
 def _write_validation_id(email: str, validation_id: str):
     """
@@ -364,6 +371,7 @@ def update_email_status_by_sg_message_id(sg_message_id: str, event: str) -> dict
                 )
             conn.commit()
         logger.info("✅ webhook: sg_message_id=%s %s → %s", base_id, row["email_status"], event)
+        row["sg_message_id"] = base_id  # normalized — safe to pass on for a resend
         return row  # cedula (row["email"]), resend_count, reporte_estudiante, reporte_padres
     except Exception:
         logger.exception("⚠️  Failed to update status for sg_message_id=%s", base_id)

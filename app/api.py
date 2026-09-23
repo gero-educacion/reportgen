@@ -119,7 +119,7 @@ async def sendgrid_webhook(request: Request):
                 resend_count += 1
                 logger.info("🔁 Resending for cedula=%s (attempt %s/%s)", cedula, resend_count, MAX_RESEND_ATTEMPTS)
                 try:
-                    send_utp_student_email(cedula=cedula, reporte_url=reporte_url, is_resend=True, sg_message_id=sg_message_id)
+                    send_utp_student_email(cedula=cedula, reporte_url=reporte_url, is_resend=True, sg_message_id=row["sg_message_id"])
                 except Exception:
                     logger.exception("Resend failed for cedula=%s", cedula)
 
