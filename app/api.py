@@ -74,12 +74,7 @@ SENDGRID_WEBHOOK_PUBLIC_KEY = os.environ.get("SENDGRID_WEBHOOK_PUBLIC_KEY", "")
 
 @app.post("/webhooks/sendgrid")
 async def sendgrid_webhook(request: Request):
-    from app.pipeline.db_writer import (
-        update_email_status_by_sg_message_id,
-        BOUNCE_TRIGGER_EVENTS,
-        MAX_RESEND_ATTEMPTS,
-    )
-    from app.pipeline.email_sender import resend_utp_student_email
+    from app.pipeline.db_writer import update_email_status_by_sg_message_id
 
     body = await request.body()
 
@@ -105,21 +100,5 @@ async def sendgrid_webhook(request: Request):
         if row is None:
             continue
         processed += 1
-
-        if event_type in BOUNCE_TRIGGER_EVENTS:
-            cedula = row["email"]
-            resend_count = row["resend_count"] or -1
-            reporte_url = row["reporte_estudiante"]
-
-            if resend_count >= MAX_RESEND_ATTEMPTS:
-                logger.warning("cedula=%s hit max resend attempts (%s), leaving for manual review", cedula, resend_count)
-            elif not reporte_url:
-                logger.warning("cedula=%s bounced but no reporte_estudiante URL stored, cannot resend", cedula)
-            else:
-                logger.info("🔁 Resending for cedula=%s (current resend_count=%s, max=%s)", cedula, resend_count, MAX_RESEND_ATTEMPTS)
-                try:
-                    resend_utp_student_email(cedula=cedula, reporte_url=reporte_url, sg_message_id=row["sg_message_id"])
-                except Exception:
-                    logger.exception("Resend failed for cedula=%s", cedula)
 
     return {"received": len(events), "processed": processed}

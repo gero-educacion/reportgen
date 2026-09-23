@@ -58,56 +58,6 @@ logger = logging.getLogger(__name__)
 #         logger.exception("⚠️  Failed to look up lead_id for %s", email)
 #         return None
 
-def update_resend_count_by_sg_message_id(sg_message_id: str) -> int | None:
-    """
-    Atomically increments resend_count for the row matching this
-    sg_message_id and returns the NEW value. SQL owns the increment
-    (no read-then-write from Python), so there's no way for a caller to
-    double-count it.
-
-    THIS IS THE ONLY PLACE resend_count IS EVER WRITTEN. Every resend
-    must go through resend_utp_student_email() in email_sender.py, which
-    calls this FIRST and only sends/overwrites sg_message_id if it
-    returns a value — do not add another writer for this column.
-
-    Strips to base_id the same way update_email_status_by_sg_message_id
-    does — a raw webhook sg_message_id carries a ".filterdrecv-..." suffix
-    that the DB never stores (write_sg_message_id writes the plain
-    X-Message-Id header, which has no suffix), so matching on the raw
-    value silently updates zero rows.
-
-    Returns None if no matching row was found (or on a DB error) — the
-    caller must treat that as "did not happen" and not send the resend,
-    since we'd otherwise lose track of the attempt entirely.
-    """
-    base_id = sg_message_id.split('.')[0]
-    sql = """
-        UPDATE byw_tracking_algoritmo_AC
-        SET    resend_count = resend_count + 1
-        WHERE  sg_message_id = %s
-    """
-    try:
-        conn = _get_connection()
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, (base_id,))
-                rows_affected = cur.rowcount
-                if rows_affected == 0:
-                    conn.commit()
-                    logger.warning("update_resend_count_by_sg_message_id: no row found for sg_message_id=%s", base_id)
-                    return None
-                cur.execute(
-                    "SELECT resend_count FROM byw_tracking_algoritmo_AC WHERE sg_message_id = %s",
-                    (base_id,),
-                )
-                new_count = cur.fetchone()["resend_count"]
-            conn.commit()
-        logger.info("✅ resend_count incremented to %s for sg_message_id=%s", new_count, base_id)
-        return new_count
-    except Exception:
-        logger.exception("⚠️ Failed to increment resend_count for sg_message_id=%s", base_id)
-        return None
-
 def _write_validation_id(email: str, validation_id: str):
     """
     Writes the validationId returned by the UTP endpoint into
@@ -342,19 +292,19 @@ EMAIL_STATUS_RANK = {
     'group_unsubscribe': 2,
 }
 
-# Events that mean "this needs a resend" — same tier the PHP poller used
-# for 'not_delivered'.
-BOUNCE_TRIGGER_EVENTS = {'bounce', 'blocked', 'dropped'}
-
-MAX_RESEND_ATTEMPTS = 2
-
-
 def update_email_status_by_sg_message_id(sg_message_id: str, event: str) -> dict | None:
     """
     Called by the SendGrid webhook. Matches on sg_message_id (stripped to
-    its base form, same as everywhere else in this system), applies the
-    rank-guarded update, and returns the row's current state so the caller
-    can decide whether to trigger a resend.
+    its base form), applies the rank-guarded update, and returns the row's
+    current state for logging/visibility.
+
+    NOTE: this only records status — it does not trigger a resend. The
+    auto-resend-on-bounce mechanic was removed; it was flooding reportgen
+    (each bounce fired a full synchronous DB+SendGrid round trip inside
+    the blocking webhook handler) and its resend_count bookkeeping kept
+    losing track of attempts. If resending comes back, do it out-of-band
+    (a separate admin action / worker job), not inline in this handler.
+
     Returns None if no matching row or event unknown/lower-ranked.
     """
     base_id = sg_message_id.split('.')[0]
@@ -368,7 +318,7 @@ def update_email_status_by_sg_message_id(sg_message_id: str, event: str) -> dict
         with conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT email, email_status, resend_count, reporte_estudiante, reporte_padres "
+                    "SELECT email, email_status "
                     "FROM byw_tracking_algoritmo_AC WHERE sg_message_id = %s LIMIT 1",
                     (base_id,),
                 )
@@ -379,7 +329,7 @@ def update_email_status_by_sg_message_id(sg_message_id: str, event: str) -> dict
 
                 current_rank = EMAIL_STATUS_RANK.get(row["email_status"], -1)
                 if new_rank < current_rank:
-                    return None  
+                    return None
 
                 cur.execute(
                     "UPDATE byw_tracking_algoritmo_AC "
@@ -389,8 +339,7 @@ def update_email_status_by_sg_message_id(sg_message_id: str, event: str) -> dict
                 )
             conn.commit()
         logger.info("✅ webhook: sg_message_id=%s %s → %s", base_id, row["email_status"], event)
-        row["sg_message_id"] = base_id  # normalized — safe to pass on for a resend
-        return row  # cedula (row["email"]), resend_count, reporte_estudiante, reporte_padres
+        return row
     except Exception:
         logger.exception("⚠️  Failed to update status for sg_message_id=%s", base_id)
         return None

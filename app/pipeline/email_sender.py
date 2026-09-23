@@ -13,7 +13,7 @@ from sendgrid.helpers.mail import (
     Bcc,
 )
 import logging
-from app.pipeline.db_writer import write_sg_message_id, update_resend_count_by_sg_message_id
+from app.pipeline.db_writer import write_sg_message_id
 from app.pipeline.db import get_connection
 
 logger = logging.getLogger(__name__)
@@ -257,9 +257,8 @@ def _send_utp_email(cedula: str, reporte_url: str) -> tuple[str, str | None] | N
     if the email couldn't be sent at all (missing contact/url/email, or a
     non-2xx SendGrid response).
 
-    Does NOT touch resend_count or write sg_message_id back to the DB —
-    that's the caller's responsibility (see send_utp_student_email and
-    resend_utp_student_email below).
+    Does NOT write sg_message_id back to the DB — that's the caller's
+    responsibility (see send_utp_student_email below).
     """
     if not reporte_url:
         logger.warning("_send_utp_email: missing reporte_url, skipping")
@@ -313,8 +312,12 @@ def _send_utp_email(cedula: str, reporte_url: str) -> tuple[str, str | None] | N
 
 def send_utp_student_email(cedula: str, reporte_url: str) -> None:
     """
-    Sends the UTP student report email for the FIRST time (not a resend —
-    see resend_utp_student_email for that).
+    Sends the UTP student report email.
+
+    NOTE: the auto-resend-on-bounce mechanic (resend_utp_student_email)
+    was removed — it was flooding reportgen under a mass-bounce event and
+    its resend_count bookkeeping kept losing track of attempts. This is
+    now the only send path.
     """
     try:
         result = _send_utp_email(cedula, reporte_url)
@@ -327,49 +330,4 @@ def send_utp_student_email(cedula: str, reporte_url: str) -> None:
     _, new_sg_message_id = result
     if new_sg_message_id:
         write_sg_message_id(user_email=cedula, sg_message_id=new_sg_message_id)
-
-
-def resend_utp_student_email(cedula: str, reporte_url: str, sg_message_id: str) -> bool:
-    """
-    Resends the UTP student report email after a bounce.
-
-    Ordering is deliberate and load-bearing: resend_count is incremented
-    FIRST, keyed on the ORIGINAL bounced message's sg_message_id, before
-    anything is sent. Only if that succeeds do we send the new email and
-    overwrite sg_message_id with the new one. This way a student's
-    attempt count can never go untracked because the row it belonged to
-    got overwritten first, or because a send failure left us unsure
-    whether the attempt should count.
-
-    If the resend_count increment can't find a matching row, the resend
-    is aborted entirely (nothing is sent) — see
-    update_resend_count_by_sg_message_id's docstring for why that column
-    must only ever be written from here.
-
-    Returns True if resend_count was incremented AND the email was sent.
-    """
-    new_count = update_resend_count_by_sg_message_id(sg_message_id)
-    if new_count is None:
-        logger.error(
-            "resend_utp_student_email: could not increment resend_count for "
-            "sg_message_id=%s (no matching row) — aborting resend for cedula=%s",
-            sg_message_id, cedula,
-        )
-        return False
-
-    try:
-        result = _send_utp_email(cedula, reporte_url)
-    except Exception as e:
-        logger.error("❌ UTP resend email error — %s | body=%s", e, getattr(e, 'body', None))
-        raise
-
-    if not result:
-        return False
-
-    _, new_sg_message_id = result
-    if new_sg_message_id:
-        write_sg_message_id(user_email=cedula, sg_message_id=new_sg_message_id)
-
-    logger.info("🔁 Resend complete for cedula=%s — resend_count now %s", cedula, new_count)
-    return True
 
