@@ -79,7 +79,7 @@ async def sendgrid_webhook(request: Request):
         BOUNCE_TRIGGER_EVENTS,
         MAX_RESEND_ATTEMPTS,
     )
-    from app.pipeline.email_sender import send_utp_student_email
+    from app.pipeline.email_sender import resend_utp_student_email
 
     body = await request.body()
 
@@ -107,8 +107,8 @@ async def sendgrid_webhook(request: Request):
         processed += 1
 
         if event_type in BOUNCE_TRIGGER_EVENTS:
-            cedula = row["email"] 
-            resend_count = row["resend_count"] or 0
+            cedula = row["email"]
+            resend_count = row["resend_count"] or -1
             reporte_url = row["reporte_estudiante"]
 
             if resend_count >= MAX_RESEND_ATTEMPTS:
@@ -116,10 +116,9 @@ async def sendgrid_webhook(request: Request):
             elif not reporte_url:
                 logger.warning("cedula=%s bounced but no reporte_estudiante URL stored, cannot resend", cedula)
             else:
-                resend_count += 1
-                logger.info("🔁 Resending for cedula=%s (attempt %s/%s)", cedula, resend_count, MAX_RESEND_ATTEMPTS)
+                logger.info("🔁 Resending for cedula=%s (current resend_count=%s, max=%s)", cedula, resend_count, MAX_RESEND_ATTEMPTS)
                 try:
-                    send_utp_student_email(cedula=cedula, reporte_url=reporte_url, is_resend=True, sg_message_id=row["sg_message_id"])
+                    resend_utp_student_email(cedula=cedula, reporte_url=reporte_url, sg_message_id=row["sg_message_id"])
                 except Exception:
                     logger.exception("Resend failed for cedula=%s", cedula)
 

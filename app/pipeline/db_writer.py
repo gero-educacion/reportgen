@@ -58,17 +58,27 @@ logger = logging.getLogger(__name__)
 #         logger.exception("⚠️  Failed to look up lead_id for %s", email)
 #         return None
 
-def update_resend_count_by_sg_message_id(sg_message_id: str) -> None:
+def update_resend_count_by_sg_message_id(sg_message_id: str) -> int | None:
     """
     Atomically increments resend_count for the row matching this
-    sg_message_id. SQL owns the increment (no read-then-write from
-    Python), so there's no way for a caller to double-count it.
+    sg_message_id and returns the NEW value. SQL owns the increment
+    (no read-then-write from Python), so there's no way for a caller to
+    double-count it.
+
+    THIS IS THE ONLY PLACE resend_count IS EVER WRITTEN. Every resend
+    must go through resend_utp_student_email() in email_sender.py, which
+    calls this FIRST and only sends/overwrites sg_message_id if it
+    returns a value — do not add another writer for this column.
 
     Strips to base_id the same way update_email_status_by_sg_message_id
     does — a raw webhook sg_message_id carries a ".filterdrecv-..." suffix
     that the DB never stores (write_sg_message_id writes the plain
     X-Message-Id header, which has no suffix), so matching on the raw
     value silently updates zero rows.
+
+    Returns None if no matching row was found (or on a DB error) — the
+    caller must treat that as "did not happen" and not send the resend,
+    since we'd otherwise lose track of the attempt entirely.
     """
     base_id = sg_message_id.split('.')[0]
     sql = """
@@ -82,13 +92,21 @@ def update_resend_count_by_sg_message_id(sg_message_id: str) -> None:
             with conn.cursor() as cur:
                 cur.execute(sql, (base_id,))
                 rows_affected = cur.rowcount
+                if rows_affected == 0:
+                    conn.commit()
+                    logger.warning("update_resend_count_by_sg_message_id: no row found for sg_message_id=%s", base_id)
+                    return None
+                cur.execute(
+                    "SELECT resend_count FROM byw_tracking_algoritmo_AC WHERE sg_message_id = %s",
+                    (base_id,),
+                )
+                new_count = cur.fetchone()["resend_count"]
             conn.commit()
-        if rows_affected == 0:
-            logger.warning("update_resend_count_by_sg_message_id: no row found for sg_message_id=%s", base_id)
-        else:
-            logger.info("✅ resend_count incremented for sg_message_id=%s", base_id)
+        logger.info("✅ resend_count incremented to %s for sg_message_id=%s", new_count, base_id)
+        return new_count
     except Exception:
-        logger.exception("⚠️ Failed to increment resend_count for sg_message_id=%s (non-fatal)", base_id)
+        logger.exception("⚠️ Failed to increment resend_count for sg_message_id=%s", base_id)
+        return None
 
 def _write_validation_id(email: str, validation_id: str):
     """
