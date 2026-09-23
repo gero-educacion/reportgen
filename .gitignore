@@ -1,6 +1,9 @@
 .DS_Store
 outputs/
 secrets/
+__pycache__/
+*.pyc
+local_test_output/
 *.json
 deploy.sh
 deploy.ps1
