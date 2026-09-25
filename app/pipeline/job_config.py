@@ -17,6 +17,15 @@ Schema per role:
     "is_utp":       bool,   # True -> SFTP upload + CRM POST branch in tasks.py
                             #         instead of Drive + WP-notify branch
     "write_majors": bool,   # True -> write_majors_to_db() runs for this role
+    "image_fields":      list[str],  # OPTIONAL — payload keys whose value is a catalog
+                                      #            key (e.g. "hobbies"), not literal text.
+                                      #            Resolved to {"image": <local path>} by
+                                      #            run_student_pipeline before templating —
+                                      #            see "image_catalog_dir" below.
+    "image_catalog_dir": str,        # OPTIONAL — subfolder under ASSETS_DIR holding the
+                                      #            fixed image catalog for "image_fields"
+                                      #            above, matched by filename stem
+                                      #            (extension-agnostic).
     "reports": [
         {
             "suffix":           str,   # e.g. "estudiante" — MUST be unique per role,
@@ -282,9 +291,11 @@ ROLE_CONFIGS: dict = {
     },
 
     "lupita": {
-        "pipeline": "chill",       
+        "pipeline": "chill",
         "is_utp": False,
-        "write_majors": False,     
+        "write_majors": False,
+        "image_fields": ["Image 1", "Image 2", "Image 3", "Image 4", "Image 5", "Image 6"],
+        "image_catalog_dir": "lupita_images",
         "reports": [
             {
                 "suffix": "lupita",
@@ -418,6 +429,18 @@ def is_utp_role(rol: str) -> bool:
 def should_write_majors(rol: str) -> bool:
     return get_role_config(rol)["write_majors"]
 
+
+def get_image_fields(rol: str) -> list[str]:
+    """Payload keys for this role whose value is a fixed-catalog image key
+    (e.g. "hobbies"), to be resolved to a local file — see get_image_catalog_dir()."""
+    return get_role_config(rol).get("image_fields", [])
+
+
+def get_image_catalog_dir(rol: str) -> Path | None:
+    """Local ASSETS_DIR subfolder holding this role's fixed image catalog, if any."""
+    subdir = get_role_config(rol).get("image_catalog_dir")
+    return (ASSETS_DIR / subdir) if subdir else None
+
 def get_report_description(rol: str, suffix: str) -> str:
     for r in get_role_config(rol)["reports"]:
         if r["suffix"] == suffix:
@@ -435,6 +458,11 @@ def role_is_ready(rol: str) -> tuple[bool, list[str]]:
         env_name = r.get("drive_folder_env")
         if env_name and not os.environ.get(env_name):
             problems.append(f"env var {env_name} not set")
+
+    catalog_dir = get_image_catalog_dir(rol)
+    if catalog_dir and not catalog_dir.exists():
+        problems.append(f"image catalog dir not found: {catalog_dir}")
+
     return (len(problems) == 0, problems)
 
 def get_all_report_filenames() -> dict[str, str]:
