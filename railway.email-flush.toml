@@ -1,0 +1,13 @@
+# Cron service: applies buffered SendGrid webhook events to the DB
+# (app/flush_email_status.py). In Railway: new service from this repo →
+# Settings → Config-as-code path = /railway.email-flush.toml.
+# Env vars: REDIS_URL + DB_* (same as the worker).
+# Railway cron is UTC: 09:00 UTC = 04:00 Lima, 01:00 UTC = 20:00 Lima.
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "python -m app.flush_email_status"
+cronSchedule = "0 1,9 * * *"
+restartPolicyType = "NEVER"
