@@ -14,26 +14,10 @@ from sendgrid.helpers.mail import (
 )
 import logging
 from app.pipeline.db_writer import write_sg_message_id
-from app.pipeline.db import get_connection
 
 logger = logging.getLogger(__name__)
 
 CC_ADDRESS = "operaciones@geroeducacion.com"
-
-
-def _no_reply_address(existing_from_env: str, default_domain: str) -> str:
-    """
-    Returns "no-reply@<domain of existing_from_env's address>", falling back
-    to "no-reply@<default_domain>" if that env var is unset.
-
-    NOTE: requires SendGrid *domain authentication* (CNAME/SPF/DKIM records)
-    on that domain rather than "Single Sender Verification" of one specific
-    mailbox — otherwise this address must be verified in the SendGrid
-    dashboard first or sends will fail with a 403.
-    """
-    existing = os.environ.get(existing_from_env, "")
-    domain = existing.split("@")[-1].strip() if "@" in existing else ""
-    return f"no-reply@{domain or default_domain}"
 
 # def _logo_src() -> str:
 #     logo_path = Path("/app/assets") / "utp-logo.png" 
@@ -159,6 +143,9 @@ def _get_student_contact(cedula: str) -> dict | None:
     matching cedula_matricula = cedula.
     Returns a dict with keys nombre, apellido, email or None if not found.
     """
+    import pymysql
+    import pymysql.cursors
+
     sql = """
         SELECT nombre, apellido, email
         FROM byw_usuarios_habilitados
@@ -167,7 +154,16 @@ def _get_student_contact(cedula: str) -> dict | None:
         LIMIT 1
     """
     try:
-        conn = get_connection()
+        conn = pymysql.connect(
+            host=os.environ["DB_HOST"],
+            port=int(os.environ.get("DB_PORT", 3306)),
+            user=os.environ["DB_USER"],
+            password=os.environ["DB_PASSWORD"],
+            database=os.environ["DB_NAME"],
+            charset="utf8mb4",
+            cursorclass=pymysql.cursors.DictCursor,
+            connect_timeout=10,
+        )
         with conn:
             with conn.cursor() as cur:
                 cur.execute(sql, (cedula,))
@@ -226,10 +222,6 @@ def build_utp_student_email_html(nombre: str, apellido: str, reporte_url: str) -
               </p>
               <p style="font-family: Calibri, sans-serif; font-size: 16px; color: #222222; line-height: 1.6;">Test Vocacional UTP</p>
 
-              <p style="font-family: Calibri, sans-serif; font-size: 11px; color: #999999; line-height: 1.4; margin-top: 24px;">
-                Este es un mensaje automático — por favor no respondas a este correo.
-              </p>
-
             </td>
           </tr>
           <tr>
@@ -247,87 +239,54 @@ def build_utp_student_email_html(nombre: str, apellido: str, reporte_url: str) -
 </html>"""
 
 
-def _send_utp_email(cedula: str, reporte_url: str) -> tuple[str, str | None] | None:
+def send_utp_student_email(cedula: str, reporte_url: str) -> None:
     """
-    Builds and sends the UTP student report email via SendGrid.
+    Sends the UTP student report email.
     Looks up nombre, apellido and email from byw_usuarios_habilitados by cedula_matricula.
-
-    Returns (to_email, new_sg_message_id) on success — new_sg_message_id may
-    be None if SendGrid didn't return an X-Message-Id header. Returns None
-    if the email couldn't be sent at all (missing contact/url/email, or a
-    non-2xx SendGrid response).
-
-    Does NOT write sg_message_id back to the DB — that's the caller's
-    responsibility (see send_utp_student_email below).
     """
     if not reporte_url:
-        logger.warning("_send_utp_email: missing reporte_url, skipping")
-        return None
+        logger.warning("send_utp_student_email: missing reporte_url, skipping")
+        return
 
     contact = _get_student_contact(cedula)
     if not contact:
-        logger.warning("_send_utp_email: no contact found for cedula=%s", cedula)
-        return None
+        logger.warning("send_utp_student_email: no contact found for cedula=%s", cedula)
+        return
 
     nombre = contact["nombre"]
     apellido = contact["apellido"]
     to_email = contact["email"]
 
     if not to_email:
-        logger.warning("_send_utp_email: no email for cedula=%s", cedula)
-        return None
+        logger.warning("send_utp_student_email: no email for cedula=%s", cedula)
+        return
 
     sg = SendGridAPIClient(os.environ.get("SENDGRID_API_KEY"))
 
-    no_reply_address = _no_reply_address(
-        existing_from_env="SENDGRID_FROM_UTP",
-        default_domain="vocacional.utp.edu.pe",
-    )
-
     message = Mail(
-        from_email=(no_reply_address, "Test Vocacional UTP"),
+        from_email=(os.environ.get("SENDGRID_FROM_UTP"), "Test Vocacional UTP"),
         to_emails=to_email,
         subject='🔴 UTP | Tu perfil vocacional está listo',
         html_content=build_utp_student_email_html(nombre, apellido, reporte_url),
     )
-    # No-reply: replies land on the sending address itself (unmonitored),
-    # not on operaciones@. Ops still gets a copy via BCC below.
-    message.reply_to = no_reply_address
+    message.reply_to = CC_ADDRESS
     message.bcc = [Bcc(CC_ADDRESS)]
 
     logger.info("📧 Sending UTP student email to %s for cedula=%s", to_email, cedula)
 
-    response = sg.send(message)
-    if response.status_code >= 400:
-        logger.error("❌ UTP student email failed — status %s", response.status_code)
-        return None
-
-    new_sg_message_id = response.headers.get("X-Message-Id")
-    logger.info("😈 sg_message_id: %s", new_sg_message_id)
-    if not new_sg_message_id:
-        logger.warning("No X-Message-Id in SendGrid response for %s", to_email)
-    logger.info("✅ UTP student email sent to %s", to_email)
-    return to_email, new_sg_message_id
-
-
-def send_utp_student_email(cedula: str, reporte_url: str) -> None:
-    """
-    Sends the UTP student report email.
-
-    NOTE: the auto-resend-on-bounce mechanic (resend_utp_student_email)
-    was removed — it was flooding reportgen under a mass-bounce event and
-    its resend_count bookkeeping kept losing track of attempts. This is
-    now the only send path.
-    """
     try:
-        result = _send_utp_email(cedula, reporte_url)
+        response = sg.send(message)
+        if response.status_code >= 400:
+          logger.error("❌ UTP student email failed — status %s", response.status_code)
+
+          sg_message_id = response.headers.get("X-Message-Id")
+          if sg_message_id:
+              write_sg_message_id(user_email=cedula, sg_message_id=sg_message_id)
+          else: 
+              logger.warning("No X-Message-Id in SendGrid response for %s", to_email)
+        else:
+          logger.info("✅ UTP student email sent to %s", to_email)
     except Exception as e:
         logger.error("❌ UTP student email error — %s | body=%s", e, getattr(e, 'body', None))
         raise
-
-    if not result:
-        return
-    _, new_sg_message_id = result
-    if new_sg_message_id:
-        write_sg_message_id(user_email=cedula, sg_message_id=new_sg_message_id)
 

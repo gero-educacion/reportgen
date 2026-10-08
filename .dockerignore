@@ -6,4 +6,3 @@ credentials.env
 tmp/
 node_modules
 .env
-.dockerignore

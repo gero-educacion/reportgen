@@ -15,13 +15,11 @@ Required env vars (shared with db_writer.py):
   DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME
 """
 
-import os
 import re
 import logging
 from datetime import datetime
 
-import pymysql
-import pymysql.cursors
+from app.pipeline.db import get_connection as _get_connection
 
 logger = logging.getLogger(__name__)
 
@@ -164,22 +162,6 @@ def _build_row(student: dict) -> dict:
 
     return row
 
-
-# ---------------------------------------------------------------------------
-# DB helpers  (same pattern as db_writer.py)
-# ---------------------------------------------------------------------------
-
-def _get_connection() -> pymysql.Connection:
-    return pymysql.connect(
-        host            = os.environ["DB_HOST"],
-        port            = int(os.environ.get("DB_PORT", 3306)),
-        user            = os.environ["DB_USER"],
-        password        = os.environ["DB_PASSWORD"],
-        database        = os.environ["DB_NAME"],
-        charset         = "utf8mb4",
-        cursorclass     = pymysql.cursors.DictCursor,
-        connect_timeout = 10,
-    )
 
 # Columns upload.php allows — keeps us in sync with the PHP whitelist.
 # created_at / updated_at are handled separately in the SQL below.

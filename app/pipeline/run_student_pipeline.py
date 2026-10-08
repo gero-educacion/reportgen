@@ -1,16 +1,46 @@
+import logging
 from pathlib import Path
 from app.pipeline.data_processing import process_student_data
 from app.pipeline.chartgen import generate_graph, generate_graph_utp
 from app.pipeline.build_pptx import determine_template, generate_report
 from app.pipeline.conversion_pdfs import convert_to_pdf
+from app.pipeline.job_config import (
+    needs_full_pipeline, chart_style, ASSETS_DIR,
+    get_image_fields, get_image_catalog_dir,
+)
 # from .email_sender import send_email
 
-PIPELINE_COMPLETO = {
-    "counseling",
-    "compass-directo",
-    "gs_actividades",
-    "UTP",
-}
+log = logging.getLogger("reportgen.pipeline")
+
+
+def _resolve_catalog_images(student: dict, rol: str) -> dict:
+    """
+    Rewrites this role's image_fields from a catalog key (e.g. "hobbies")
+    to {"image": <local path>}, which is what build_pptx.generate_report
+    needs to embed an actual picture instead of literal key text.
+
+    The catalog is a FIXED set of images shared across every student
+    (assets/<image_catalog_dir>/), matched by filename stem so the payload
+    never needs to know the file extension. Returns `student` unchanged if
+    this role has no image_fields configured.
+    """
+    fields = get_image_fields(rol)
+    catalog_dir = get_image_catalog_dir(rol)
+    if not fields or not catalog_dir:
+        return student
+
+    result = dict(student)
+    for field in fields:
+        key = result.get(field)
+        if not isinstance(key, str) or not key:
+            continue
+        matches = list(catalog_dir.glob(f"{key}.*"))
+        if not matches:
+            log.warning("No catalog image found for %s=%r (role=%s, dir=%s)", field, key, rol, catalog_dir)
+            continue
+        result[field] = {"image": str(matches[0])}
+    return result
+
 
 def run_student_pipeline(job: dict, job_dir: Path):
     """
@@ -18,7 +48,6 @@ def run_student_pipeline(job: dict, job_dir: Path):
         - los del CCR no requieren nada en especial (e.g. procesamiento de datos, charts, etc)
         - los de AC requieren todo so let's go
     """
-    assets_dir = Path("/app/assets")
     rol = job.get("Rol")
 
     name  = (
@@ -32,16 +61,15 @@ def run_student_pipeline(job: dict, job_dir: Path):
     print("their role is ", rol)
 
     # flujo completo para los de AC
-    if rol in PIPELINE_COMPLETO:
+    if needs_full_pipeline(rol):
         print("they requiere a complete pipeline")
-        student = process_student_data(job, assets_dir)
+        student = process_student_data(job, ASSETS_DIR)
+        chart_path = job_dir / "chart.png"
 
-        if rol == "UTP":
-            chart_path = job_dir / "chart.png"
+        if chart_style(rol) == "utp":
             generate_graph_utp(student, chart_path)
             
         else:
-            chart_path = job_dir / "chart.png"
             generate_graph(student, chart_path)
 
     # flujo de chill para los del CCR
@@ -50,8 +78,10 @@ def run_student_pipeline(job: dict, job_dir: Path):
         student = job
         chart_path = None
 
+    student = _resolve_catalog_images(student, rol)
+
     # todo el resto se comparte so just do that
-    templates = determine_template(student, assets_dir)
+    templates = determine_template(student, ASSETS_DIR)
     print("templates determined: ", templates)
 
     pdf_paths: list[Path] = []

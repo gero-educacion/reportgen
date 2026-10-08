@@ -3,40 +3,27 @@ import json
 import logging
 import traceback
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from app.pipeline.run_student_pipeline import run_student_pipeline
 from app.pipeline.build_pptx import determine_template
 from app.pipeline.email_sender import send_report_email
-from app.pipeline.drive_uploader import upload_pdf_to_drive, upsert_json_to_drive
+from app.pipeline.drive_uploader import upload_pdf_to_drive, upsert_json_to_drive, get_drive_service
 from app.pipeline.drive_downloader import download_drive_file
 from app.pipeline.siteground_sender import send_report_to_siteground, upload_pdf_to_siteground
 from app.pipeline.sheets_updater import update_student_status
 from app.pipeline.student_historic import get_all_links, upsert_student
 from app.pipeline.db_writer import write_majors_to_db, post_utp_payload, alter_table_reports
 from app.pipeline.historic_db_writer import upsert_historico
+from app.pipeline.job_config import (
+    get_report_filenames, get_report_titles, get_all_report_filenames,
+    get_drive_folder, is_utp_role, should_write_majors, get_report_description,
+)
 
 logger = logging.getLogger("reportgen.tasks")
 
 APP_TMP_DIR = Path("/app/tmp/jobs")
 APP_TMP_DIR.mkdir(parents=True, exist_ok=True)
-
-UTP_ROLES = {"UTP"}
-
-REPORT_TITLES = {
-    "estudiante":   'Reporte "Autoconocimiento"',
-    "padres":       'Reporte "Autoconocimiento versión padres"',
-    "ccr_rojo":     "CCR EN BOXES",
-    "ccr_amarillo": "CCR CALENTANDO MOTORES",
-    "ccr_verde":    "CCR A TODA MARCHA",
-}
-
-REPORT_FILENAMES = {
-    "estudiante":   "Reporte_Autoconocimiento.pdf",
-    "padres":       "Reporte_Autoconocimiento_Padres.pdf",
-    "ccr_rojo":     "CCR_En_Boxes.pdf",
-    "ccr_amarillo": "CCR_Calentando_Motores.pdf",
-    "ccr_verde":    "CCR_A_Toda_Marcha.pdf",
-}
 
 
 def safe_filename(text: str) -> str:
@@ -47,6 +34,26 @@ def safe_filename(text: str) -> str:
     text = re.sub(r"\s+", "_", text)
     text = re.sub(r"[^a-z0-9_\-\.]", "", text)
     return text
+
+
+def _run_concurrent(jobs: dict, on_error: str) -> dict:
+    """
+    Runs each zero-arg callable in `jobs` (keyed by report_type) concurrently.
+    A failure is logged and that key is simply left out of the result dict —
+    same non-fatal-per-report behavior as the old sequential try/except loops.
+    """
+    results = {}
+    if not jobs:
+        return results
+    with ThreadPoolExecutor(max_workers=len(jobs)) as executor:
+        future_to_key = {executor.submit(fn): key for key, fn in jobs.items()}
+        for future in as_completed(future_to_key):
+            key = future_to_key[future]
+            try:
+                results[key] = future.result()
+            except Exception:
+                logger.exception("⚠️  %s failed for %s", on_error, key)
+    return results
 
 
 def process_report_job(job: dict):
@@ -65,7 +72,8 @@ def process_report_job(job: dict):
         or student_id
     )
     rol        = job.get("Rol", "")
-    is_utp     = rol in UTP_ROLES
+    is_utp     = is_utp_role(rol)
+    report_titles = get_report_titles(rol)
 
     flag_send_email      = job.get("send_email",      True)
     flag_upload_drive    = job.get("upload_drive",    True)
@@ -91,10 +99,12 @@ def process_report_job(job: dict):
             if flag_send_email:
                 downloaded_pdfs = []
                 failed_types    = []
+                all_filenames = get_all_report_filenames()
+                drive_service = get_drive_service()  # reused for every download below
                 for report_type, drive_link in historic_links.items():
-                    filename = REPORT_FILENAMES.get(report_type, f"{report_type}.pdf")
+                    filename = all_filenames.get(report_type, f"{report_type}.pdf")
                     try:
-                        downloaded_pdfs.append(download_drive_file(drive_link, filename))
+                        downloaded_pdfs.append(download_drive_file(drive_link, filename, service=drive_service))
                     except Exception:
                         failed_types.append(report_type)
 
@@ -142,7 +152,7 @@ def process_report_job(job: dict):
     # ---------------------------------------------------------------
     # WRITE MAJORS TO DB
     # ---------------------------------------------------------------
-    if rol not in {"Verde", "Rojo", "Amarillo"}:
+    if should_write_majors(rol):
         try:
             write_majors_to_db(job)
         except Exception:
@@ -170,12 +180,15 @@ def process_report_job(job: dict):
         if user_email:
             logger.exception("the user email is %s", user_email)
 
-        for report_type, pdf_path in reports.items():
-            filename = f"{safe_filename(name)}_{report_type}_{student_id}.pdf"
-            try:
-                sg_file_links[report_type] = upload_pdf_to_siteground(pdf_path, filename)
-            except Exception:
-                logger.exception("⚠️  SiteGround upload failed for %s", report_type)
+        upload_jobs = {
+            report_type: (
+                lambda p=pdf_path, t=report_type: upload_pdf_to_siteground(
+                    p, f"{safe_filename(name)}_{t}_{student_id}.pdf"
+                )
+            )
+            for report_type, pdf_path in reports.items()
+        }
+        sg_file_links = _run_concurrent(upload_jobs, on_error="SiteGround upload")
 
         if sg_file_links and user_email:
             try:
@@ -203,43 +216,42 @@ def process_report_job(job: dict):
     # ---------------------------------------------------------------
     else:
         if flag_upload_drive:
+            upload_jobs = {}
             for report_type, pdf_path in reports.items():
-                post_title = REPORT_TITLES.get(report_type)
+                post_title = report_titles.get(report_type)
                 if not post_title:
                     continue
-                if report_type.startswith("ccr"):
-                    folder_id = os.environ.get("DRIVE_FOLDER_CCR")
-                elif report_type == "estudiante":
-                    folder_id = os.environ.get("DRIVE_FOLDER_AUTO_EST")
-                elif report_type == "padres":
-                    folder_id = os.environ.get("DRIVE_FOLDER_AUTO_PAD")
-                else:
+                folder_id = get_drive_folder(rol, report_type)
+                if not folder_id:
+                    logger.warning("⚠️  No Drive folder configured for rol=%s report_type=%s", rol, report_type)
                     continue
 
                 filename = f"{safe_filename(name)}_{report_type}_{student_id}.pdf"
-                try:
-                    drive_links[report_type] = upload_pdf_to_drive(
-                        pdf_path=pdf_path, target_folder_id=folder_id, filename=filename
+                upload_jobs[report_type] = (
+                    lambda p=pdf_path, f=folder_id, fn=filename: upload_pdf_to_drive(
+                        pdf_path=p, target_folder_id=f, filename=fn
                     )
-                except Exception:
-                    logger.exception("⚠️  Drive upload failed for %s", report_type)
+                )
 
+            drive_links = _run_concurrent(upload_jobs, on_error="Drive upload")
             drive_uploaded = "yes" if drive_links else "no"
         else:
             drive_uploaded = "skipped"
 
         if flag_post_siteground and drive_links:
-            sg_ok = 0
+            sg_jobs = {}
             for report_type, drive_link in drive_links.items():
-                post_title = REPORT_TITLES.get(report_type)
+                post_title = report_titles.get(report_type)
                 if not post_title:
                     continue
-                try:
-                    send_report_to_siteground(email=email, drive_link=drive_link, post_title=post_title)
-                    sg_ok += 1
-                except Exception:
-                    logger.exception("⚠️  SiteGround failed for %s", report_type)
-            sg_uploaded = "yes" if sg_ok else "no"
+                description = get_report_description(rol, report_type)
+                sg_jobs[report_type] = (
+                    lambda e=email, dl=drive_link, pt=post_title, d=description: send_report_to_siteground(
+                        email=e, drive_link=dl, post_title=pt, description=d
+                    )
+                )
+            sg_results = _run_concurrent(sg_jobs, on_error="SiteGround")
+            sg_uploaded = "yes" if sg_results else "no"
         else:
             sg_uploaded = "skipped"
 

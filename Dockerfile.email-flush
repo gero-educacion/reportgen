@@ -1,0 +1,17 @@
+# Slim image for the "email-flush" Railway cron service.
+# Only what app/flush_email_status.py imports — no LibreOffice, fonts or matplotlib.
+# Railway → Settings → Build: Dockerfile path = Dockerfile.email-flush
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir requests PyMySQL "redis>=4.6.0" "rq>=1.15.1"
+
+COPY app/__init__.py              /app/app/__init__.py
+COPY app/queue.py                 /app/app/queue.py
+COPY app/flush_email_status.py    /app/app/flush_email_status.py
+COPY app/pipeline/__init__.py     /app/app/pipeline/__init__.py
+COPY app/pipeline/db.py           /app/app/pipeline/db.py
+COPY app/pipeline/db_writer.py    /app/app/pipeline/db_writer.py
+
+CMD ["python", "-m", "app.flush_email_status"]

@@ -26,27 +26,10 @@ Required env vars (UTP endpoint):
 import os
 import logging
 import requests
-import pymysql
-import pymysql.cursors
+
+from app.pipeline.db import get_connection as _get_connection
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# MySQL
-# ---------------------------------------------------------------------------
-
-def _get_connection() -> pymysql.Connection:
-    return pymysql.connect(
-        host            = os.environ["DB_HOST"],
-        port            = int(os.environ.get("DB_PORT", 3306)),
-        user            = os.environ["DB_USER"],
-        password        = os.environ["DB_PASSWORD"],
-        database        = os.environ["DB_NAME"],
-        charset         = "utf8mb4",
-        cursorclass     = pymysql.cursors.DictCursor,
-        connect_timeout = 10,
-    )
 
 
 # def _get_lead_id(email: str) -> str | None:
@@ -74,7 +57,6 @@ def _get_connection() -> pymysql.Connection:
 #     except Exception as e:
 #         logger.exception("⚠️  Failed to look up lead_id for %s", email)
 #         return None
-
 
 def _write_validation_id(email: str, validation_id: str):
     """
@@ -255,3 +237,144 @@ def post_utp_payload(
         except Exception:
             pass
         logger.exception("⚠️  UTP endpoint post failed (non-fatal)")
+
+
+def write_sg_message_id(user_email: str, sg_message_id: str):
+    """
+    Called by reportgen right after sending the UTP student email.
+    Stamps sg_message_id + initial email_status="Enviado" onto the most
+    recent row for this email. This is the ONLY write that matches by email —
+    everything after this matches by sg_message_id instead, to avoid stamping
+    the wrong row if the student gets reprocessed later.
+    """
+    from datetime import date
+
+    sql = """
+        UPDATE byw_tracking_algoritmo_AC
+        SET    sg_message_id = %s,
+               email_status = %s,
+               email_status_updated_at = %s
+        WHERE  LOWER(email) = LOWER(%s)
+        ORDER  BY response_at DESC
+        LIMIT  1
+    """
+    try:
+        conn = _get_connection()
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (sg_message_id, "Enviado", date.today(), user_email))
+                rows_affected = cur.rowcount
+            conn.commit()
+        if rows_affected == 0:
+            logger.warning("write_sg_message_id: no row found for email=%s", user_email)
+        else:
+            logger.info("✅ sg_message_id=%s written for %s", sg_message_id, user_email)
+    except Exception:
+        logger.exception("⚠️  Failed to write sg_message_id for %s (non-fatal)", user_email)
+
+
+# Rank covers both raw webhook event names and Activity API status
+# values, since some historic code paths use the latter.
+EMAIL_STATUS_RANK = {
+    'Enviado':      -1,
+    'processed':     0,
+    'deferred':      0,
+    'delivered':     1,
+    'open':          1,
+    'click':         1,
+    'not_delivered': 2,
+    'bounce':        2,
+    'blocked':       2,
+    'dropped':       2,
+    'invalid':       2,
+    'spamreport':    2,
+    'unsubscribe':   2,
+    'group_unsubscribe': 2,
+}
+
+EMAIL_EVENTS_BUFFER = "email_status_events"
+
+
+def buffer_email_events(events: list[dict]) -> int:
+    """
+    Called by the SendGrid webhook. Pushes "<base_sg_message_id>|<event>" for
+    every ranked event onto a Redis list in one round trip — no DB work in
+    the request. flush_email_status_buffer() applies them in batch later.
+    Returns the number of events buffered.
+    """
+    from app.queue import get_redis
+
+    items = []
+    for e in events:
+        sg_message_id = e.get("sg_message_id") or ""
+        event = e.get("event")
+        if sg_message_id and event in EMAIL_STATUS_RANK:
+            items.append(f"{sg_message_id.split('.')[0]}|{event}")
+    if items:
+        get_redis().rpush(EMAIL_EVENTS_BUFFER, *items)
+    return len(items)
+
+
+def flush_email_status_buffer() -> int:
+    """
+    Twice-daily job (Railway cron service, see app/flush_email_status.py).
+    Drains the webhook event buffer, keeps the highest-ranked event per
+    message, and applies it to byw_tracking_algoritmo_AC with one SELECT
+    plus an UPDATE per row that actually changes. A status never moves
+    down in rank. Messages with no row (non-UTP emails) are ignored.
+
+    NOTE: this only records status — it does not trigger a resend. The
+    auto-resend-on-bounce mechanic was removed (it flooded reportgen and
+    its resend_count bookkeeping kept losing track of attempts).
+
+    Returns the number of rows updated.
+    """
+    from app.queue import get_redis
+
+    r = get_redis()
+    processing = f"{EMAIL_EVENTS_BUFFER}:processing"
+    # Leftovers from a run that crashed before DB commit get retried first.
+    if not r.exists(processing):
+        if not r.exists(EMAIL_EVENTS_BUFFER):
+            logger.info("📬 email flush: buffer empty")
+            return 0
+        r.rename(EMAIL_EVENTS_BUFFER, processing)  # atomic: new events go to a fresh list
+
+    latest: dict[str, str] = {}
+    raw = r.lrange(processing, 0, -1)
+    for item in raw:
+        base_id, _, event = item.decode().partition("|")
+        if EMAIL_STATUS_RANK.get(event, -1) >= EMAIL_STATUS_RANK.get(latest.get(base_id), -1):
+            latest[base_id] = event
+
+    updated = 0
+    ids = list(latest)
+    conn = _get_connection()
+    with conn:
+        with conn.cursor() as cur:
+            for i in range(0, len(ids), 500):
+                chunk = ids[i:i + 500]
+                cur.execute(
+                    "SELECT sg_message_id, email_status FROM byw_tracking_algoritmo_AC "
+                    f"WHERE sg_message_id IN ({', '.join(['%s'] * len(chunk))})",
+                    chunk,
+                )
+                for row in cur.fetchall():
+                    new_status = latest[row["sg_message_id"]]
+                    current = row["email_status"]
+                    if new_status == current:
+                        continue
+                    if EMAIL_STATUS_RANK[new_status] < EMAIL_STATUS_RANK.get(current, -1):
+                        continue
+                    cur.execute(
+                        "UPDATE byw_tracking_algoritmo_AC "
+                        "SET email_status = %s, email_status_updated_at = CURDATE() "
+                        "WHERE sg_message_id = %s",
+                        (new_status, row["sg_message_id"]),
+                    )
+                    updated += 1
+        conn.commit()
+
+    r.delete(processing)
+    logger.info("📬 email flush: %d events, %d messages, %d rows updated", len(raw), len(latest), updated)
+    return updated

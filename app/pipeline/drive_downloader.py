@@ -10,28 +10,14 @@ the file in the first place.
 
 import re
 import logging
-import os
 import tempfile
 from pathlib import Path
-import json
-from google.oauth2 import service_account
-import google.auth
-from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 from googleapiclient.errors import HttpError
 
+from app.pipeline.drive_uploader import get_drive_service
+
 logger = logging.getLogger(__name__)
-
-SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
-
-def get_drive_service():
-    creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON")
-    if creds_json:
-        info = json.loads(creds_json)
-        creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
-    else:
-        creds, _ = google.auth.default(scopes=SCOPES)
-    return build("drive", "v3", credentials=creds)
 
 
 def _extract_file_id(web_view_link: str) -> str:
@@ -50,10 +36,13 @@ def _extract_file_id(web_view_link: str) -> str:
     raise ValueError(f"Could not extract file ID from link: {web_view_link}")
 
 
-def download_drive_file(web_view_link: str, filename: str) -> Path:
+def download_drive_file(web_view_link: str, filename: str, service=None) -> Path:
     """
     Downloads the Drive file to a system temp directory.
     Returns the Path to the downloaded file.
+
+    Pass an existing `service` (from get_drive_service()) to reuse it across
+    multiple downloads in the same job instead of rebuilding it each call.
 
     Raises:
         FileNotFoundError  — if the file no longer exists on Drive (404)
@@ -62,7 +51,7 @@ def download_drive_file(web_view_link: str, filename: str) -> Path:
     file_id = _extract_file_id(web_view_link)
     logger.info("⬇️  Downloading Drive file_id=%s (%s)", file_id, filename)
 
-    service = get_drive_service()
+    service = service or get_drive_service()
 
     tmp_path = Path(tempfile.mkdtemp()) / filename
 
