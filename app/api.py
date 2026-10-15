@@ -7,7 +7,7 @@ import json
 import os
 from sendgrid.helpers.eventwebhook import EventWebhook
 
-from app.queue import enqueue_report, get_job_status
+from app.queue import enqueue_report, get_job_status, JobAlreadyActive
 from app.pipeline.job_config import role_is_ready
 
 logging.basicConfig(
@@ -54,6 +54,8 @@ def run_student(job: dict):
 
     try:
         rq_job_id = enqueue_report(job)
+    except JobAlreadyActive:
+        raise HTTPException(status_code=409, detail=f"Job {job_id} is already queued or running")
     except Exception as e:
         logger.exception("💥 Failed to enqueue job %s", job_id)
         raise HTTPException(status_code=500, detail=f"Queue error: {e}")

@@ -17,6 +17,8 @@ Schema per role:
     "is_utp":       bool,   # True -> SFTP upload + CRM POST branch in tasks.py
                             #         instead of Drive + WP-notify branch
     "write_majors": bool,   # True -> write_majors_to_db() runs for this role
+    "queue":        str,    # OPTIONAL — RQ queue this role is enqueued into.
+                            #            Defaults to QUEUE_BY_PIPELINE[pipeline].
     "image_fields":      list[str],  # OPTIONAL — payload keys whose value is a catalog
                                       #            key (e.g. "hobbies"), not literal text.
                                       #            Resolved to {"image": <local path>} by
@@ -420,6 +422,20 @@ def chart_style(rol: str) -> str | None:
     if pipeline == "utp_chart":
         return "utp"
     return None
+
+
+# Default RQ queue per pipeline type. Heavy (chart + data processing) roles
+# get their own queue so a backlog of them can't block the light ones.
+QUEUE_BY_PIPELINE = {
+    "full":      "reports_full",
+    "utp_chart": "reports_utp",
+    "chill":     "reports_chill",
+}
+
+
+def get_queue_name(rol: str) -> str:
+    cfg = get_role_config(rol)
+    return cfg.get("queue") or QUEUE_BY_PIPELINE[cfg["pipeline"]]
 
 
 def is_utp_role(rol: str) -> bool:

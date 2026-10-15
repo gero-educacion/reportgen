@@ -329,9 +329,16 @@ def flush_email_status_buffer() -> int:
 
     Returns the number of rows updated.
     """
-    from app.queue import get_redis
+    from urllib.parse import urlparse
+    from redis import Redis
+    from app.queue import REDIS_URL
 
-    r = get_redis()
+    # Own client with timeouts: a cron run should fail fast, not hang.
+    u = urlparse(REDIS_URL)
+    logger.info("📬 email flush: connecting to Redis %s:%s", u.hostname, u.port)
+    r = Redis.from_url(REDIS_URL, socket_connect_timeout=10, socket_timeout=30)
+    r.ping()
+    logger.info("📬 email flush: Redis OK")
     processing = f"{EMAIL_EVENTS_BUFFER}:processing"
     # Leftovers from a run that crashed before DB commit get retried first.
     if not r.exists(processing):
@@ -349,6 +356,7 @@ def flush_email_status_buffer() -> int:
 
     updated = 0
     ids = list(latest)
+    logger.info("📬 email flush: %d events buffered, connecting to MySQL", len(raw))
     conn = _get_connection()
     with conn:
         with conn.cursor() as cur:

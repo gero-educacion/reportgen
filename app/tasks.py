@@ -1,5 +1,6 @@
 import os
 import json
+import shutil
 import logging
 import traceback
 from pathlib import Path
@@ -110,12 +111,17 @@ def process_report_job(job: dict):
 
                 if not failed_types:
                     send_report_email(to_email=email, pdf_paths=downloaded_pdfs, student=job)
-                    update_student_status(
-                        student_id, job,
-                        status="resent", email_sent="yes",
-                        drive_uploaded="yes", siteground_uploaded="skipped",
-                        drive_links=historic_links,
-                    )
+                    # El email ya salió: de acá en adelante nada puede disparar un retry.
+                    try:
+                        update_student_status(
+                            student_id, job,
+                            status="resent", email_sent="yes",
+                            drive_uploaded="yes", siteground_uploaded="skipped",
+                            drive_links=historic_links,
+                        )
+                    except Exception:
+                        logger.exception("⚠️  update_student_status failed (non-fatal)")
+                    shutil.rmtree(job_dir, ignore_errors=True)
                     return {"status": "resent", "job_id": job_id}
 
     # ---------------------------------------------------------------
@@ -136,7 +142,10 @@ def process_report_job(job: dict):
         
     except Exception as e:
         logger.exception("💥 Pipeline failed for %s", job_id)
-        update_student_status(student_id, job, status="error", error_msg=str(e))
+        try:
+            update_student_status(student_id, job, status="error", error_msg=str(e))
+        except Exception:
+            logger.exception("⚠️  update_student_status failed (non-fatal)")
         with open(job_dir / "error.txt", "w") as f:
             f.write(traceback.format_exc())
         raise  # RQ marca el job como failed y aplica retry
@@ -258,8 +267,13 @@ def process_report_job(job: dict):
     # ---------------------------------------------------------------
     # HISTORIC upsert
     # ---------------------------------------------------------------
+    # A partir de acá ya hubo uploads (y después el email): ningún error puede
+    # propagarse, porque el retry de RQ re-correría todo y duplicaría envíos.
     if drive_links:
-        upsert_student(email=email, student_id=student_id, name=name, drive_links=drive_links)
+        try:
+            upsert_student(email=email, student_id=student_id, name=name, drive_links=drive_links)
+        except Exception:
+            logger.exception("⚠️  upsert_student failed (non-fatal)")
 
     # ---------------------------------------------------------------
     # EMAIL
@@ -280,15 +294,19 @@ def process_report_job(job: dict):
     # ---------------------------------------------------------------
     # STATUS SHEET
     # ---------------------------------------------------------------
-    update_student_status(
-        student_id, job,
-        status="ok",
-        email_sent=email_sent,
-        drive_uploaded=drive_uploaded,
-        siteground_uploaded=sg_uploaded,
-        drive_links=drive_links,
-        input_json_link=input_json_link,
-    )
+    try:
+        update_student_status(
+            student_id, job,
+            status="ok",
+            email_sent=email_sent,
+            drive_uploaded=drive_uploaded,
+            siteground_uploaded=sg_uploaded,
+            drive_links=drive_links,
+            input_json_link=input_json_link,
+        )
+    except Exception:
+        logger.exception("⚠️  update_student_status failed (non-fatal)")
 
+    shutil.rmtree(job_dir, ignore_errors=True)
     logger.info("✅ Job complete: %s", job_id)
     return {"status": "ok", "job_id": job_id, "report_types": report_types}
