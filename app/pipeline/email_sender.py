@@ -14,7 +14,7 @@ from sendgrid.helpers.mail import (
 )
 import logging
 from app.pipeline.db_writer import write_sg_message_id
-from app.pipeline.db import get_connection
+from app.pipeline.db import db_cursor
 
 logger = logging.getLogger(__name__)
 
@@ -162,16 +162,14 @@ def _get_student_contact(cedula: str) -> dict | None:
     sql = """
         SELECT nombre, apellido, email
         FROM byw_usuarios_habilitados
-        WHERE LOWER(cedula_matricula) = LOWER(%s)
+        WHERE cedula_matricula = %s
           AND cliente = 'Universidad Tecnológica de Perú'
         LIMIT 1
     """
     try:
-        conn = get_connection()
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, (cedula,))
-                return cur.fetchone()
+        with db_cursor() as cur:
+            cur.execute(sql, (cedula,))
+            return cur.fetchone()
     except Exception:
         logger.exception("Failed to fetch student contact for cedula=%s", cedula)
         return None

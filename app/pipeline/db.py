@@ -12,6 +12,7 @@ Required env vars: DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME
 import os
 import logging
 import threading
+from contextlib import contextmanager
 
 import pymysql
 import pymysql.cursors
@@ -47,3 +48,23 @@ def get_connection() -> pymysql.Connection:
     conn = _connect()
     _local.conn = conn
     return conn
+
+
+@contextmanager
+def db_cursor():
+    """
+    Cursor on the cached connection: commits on success, rolls back on error,
+    and leaves the connection OPEN for the next call. (`with conn:` would
+    close it, forcing a full reconnect — ~1.5s — on every query.)
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            yield cur
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise

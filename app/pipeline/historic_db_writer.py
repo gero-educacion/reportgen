@@ -19,7 +19,7 @@ import re
 import logging
 from datetime import datetime
 
-from app.pipeline.db import get_connection as _get_connection
+from app.pipeline.db import db_cursor
 
 logger = logging.getLogger(__name__)
 
@@ -234,11 +234,8 @@ def upsert_historico(student: dict):
                 `updated_at` = NOW()
         """
 
-        conn = _get_connection()
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, data)
-            conn.commit()
+        with db_cursor() as cur:
+            cur.execute(sql, data)
 
         logger.info("✅ byw_autoconocimiento_historico upserted for %s", email)
 

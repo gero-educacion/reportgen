@@ -27,7 +27,7 @@ import os
 import logging
 import requests
 
-from app.pipeline.db import get_connection as _get_connection
+from app.pipeline.db import get_connection as _get_connection, db_cursor
 
 logger = logging.getLogger(__name__)
 
@@ -66,16 +66,13 @@ def _write_validation_id(email: str, validation_id: str):
     sql = """
         UPDATE byw_tracking_algoritmo_AC
         SET    validationId = %s
-        WHERE  LOWER(email) = LOWER(%s)
+        WHERE  email = %s
         ORDER  BY response_at DESC
         LIMIT  1
     """
     try:
-        conn = _get_connection()
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, (validation_id, email))
-            conn.commit()
+        with db_cursor() as cur:
+            cur.execute(sql, (validation_id, email))
         logger.info("✅ validationId=%s written to byw_tracking_algoritmo_AC for %s", validation_id, email)
     except Exception as e:
         logger.exception("⚠️  Failed to write validationId for %s (non-fatal)", email)
@@ -89,7 +86,7 @@ def alter_table_reports(user_email: str, links: dict):
         UPDATE byw_tracking_algoritmo_AC
         SET    reporte_estudiante = %s,
                reporte_padres     = %s
-        WHERE  LOWER(email) = LOWER(%s)
+        WHERE  email = %s
         ORDER  BY response_at DESC
         LIMIT  1
     """
@@ -97,12 +94,9 @@ def alter_table_reports(user_email: str, links: dict):
     reporte_padres     = links.get("padres", "")
 
     try:
-        conn = _get_connection()
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, (reporte_estudiante, reporte_padres, user_email))
-                rows_affected = cur.rowcount
-            conn.commit()
+        with db_cursor() as cur:
+            cur.execute(sql, (reporte_estudiante, reporte_padres, user_email))
+            rows_affected = cur.rowcount
         if rows_affected == 0:
             logger.warning("alter_table_reports: no row found for email=%s", user_email)
         else:
@@ -138,7 +132,7 @@ def write_majors_to_db(student: dict):
           u.display_name,
           %s, %s, %s, %s
         FROM byw_users AS u
-        WHERE LOWER(u.user_email) = LOWER(%s)
+        WHERE u.user_email = %s
         ON DUPLICATE KEY UPDATE
           user_email = VALUES(user_email),
           nombre     = VALUES(nombre),
@@ -149,11 +143,8 @@ def write_majors_to_db(student: dict):
     """
 
     try:
-        conn = _get_connection()
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, (c1, c2, c3, c4, email))
-            conn.commit()
+        with db_cursor() as cur:
+            cur.execute(sql, (c1, c2, c3, c4, email))
         logger.info("✅ Majors written to DB for %s", email)
     except Exception as e:
         logger.exception("⚠️  Failed to write majors to DB for %s (non-fatal)", email)
@@ -254,17 +245,14 @@ def write_sg_message_id(user_email: str, sg_message_id: str):
         SET    sg_message_id = %s,
                email_status = %s,
                email_status_updated_at = %s
-        WHERE  LOWER(email) = LOWER(%s)
+        WHERE  email = %s
         ORDER  BY response_at DESC
         LIMIT  1
     """
     try:
-        conn = _get_connection()
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, (sg_message_id, "Enviado", date.today(), user_email))
-                rows_affected = cur.rowcount
-            conn.commit()
+        with db_cursor() as cur:
+            cur.execute(sql, (sg_message_id, "Enviado", date.today(), user_email))
+            rows_affected = cur.rowcount
         if rows_affected == 0:
             logger.warning("write_sg_message_id: no row found for email=%s", user_email)
         else:

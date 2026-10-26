@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 from app.pipeline.data_processing import process_student_data
 from app.pipeline.chartgen import generate_graph, generate_graph_utp
 from app.pipeline.build_pptx import determine_template, generate_report
@@ -86,6 +87,7 @@ def run_student_pipeline(job: dict, job_dir: Path):
 
     pdf_paths: list[Path] = []
     report_types: list[str] = []
+    conversions: list[tuple[Path, Path]] = []
 
     for suffix, template_path in templates:
         pptx_path = job_dir / f"report_{suffix}.pptx"
@@ -98,9 +100,14 @@ def run_student_pipeline(job: dict, job_dir: Path):
             output_pptx_path=pptx_path,
         )
 
-        convert_to_pdf(pptx_path, pdf_path)
-
+        conversions.append((pptx_path, pdf_path))
         pdf_paths.append(pdf_path)
         report_types.append(suffix)
+
+    # Gotenberg tiene varias réplicas: convertir todos los reportes en paralelo
+    # en vez de uno atrás del otro. Si alguno falla, la excepción se propaga.
+    with ThreadPoolExecutor(max_workers=len(conversions) or 1) as executor:
+        for future in [executor.submit(convert_to_pdf, pptx, pdf) for pptx, pdf in conversions]:
+            future.result()
 
     return pdf_paths, report_types

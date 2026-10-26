@@ -310,3 +310,10 @@ def process_report_job(job: dict):
     shutil.rmtree(job_dir, ignore_errors=True)
     logger.info("✅ Job complete: %s", job_id)
     return {"status": "ok", "job_id": job_id, "report_types": report_types}
+
+
+# Load test: reemplaza los efectos externos por sleeps (ver app/loadtest.py).
+# Va acá, al importar el módulo, para que aplique en cualquier proceso que corra jobs.
+if os.environ.get("LOADTEST_MODE") == "1":
+    from app.loadtest import install_mocks
+    install_mocks()

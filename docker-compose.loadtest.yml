@@ -1,0 +1,35 @@
+# Load test local: Redis + Gotenberg real + workers en LOADTEST_MODE.
+# Standalone a propósito: NO carga .env, así ninguna credencial de prod entra
+# a los contenedores (los efectos externos igual están mockeados, ver app/loadtest.py).
+#
+#   docker compose -f docker-compose.loadtest.yml up -d --build --scale worker=8 --scale gotenberg=4
+#   python scripts/loadtest.py run -n 300 --rol UTP --redis-url redis://localhost:6381
+#   docker compose -f docker-compose.loadtest.yml down
+#
+# Variables: RQ_WORKERS (procesos por contenedor worker), LOADTEST_LATENCY_SCALE.
+name: reportgen-loadtest
+
+services:
+  redis:
+    image: redis:7
+    ports:
+      - "6381:6379"   # 6381: no choca con el redis de docker-compose.local-test.yml
+
+  gotenberg:
+    build:
+      context: .
+      dockerfile: Dockerfile.gotenberg
+    # Varias réplicas: el DNS de Docker reparte "gotenberg" entre todas.
+
+  worker:
+    build: .
+    command: ["python", "worker.py"]
+    environment:
+      - LOADTEST_MODE=1
+      - REDIS_URL=redis://redis:6379
+      - GOTENBERG_URL=http://gotenberg:3000
+      - RQ_WORKERS=${RQ_WORKERS:-1}
+      - LOADTEST_LATENCY_SCALE=${LOADTEST_LATENCY_SCALE:-1}
+    depends_on:
+      - redis
+      - gotenberg

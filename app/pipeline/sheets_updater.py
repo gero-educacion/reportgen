@@ -3,11 +3,16 @@ sheets_updater.py
 -----------------
 Writes one status row per student to a Google Sheet.
 
-Concurrency strategy:
-  - Uses exponential backoff + jitter on every Sheets API call (handles quota errors)
-  - Before appending, scans existing rows for this student_id and UPDATES in place
-    instead of appending — this eliminates duplicate rows even if two requests
-    race to write at the same time (last-write-wins on the same row is fine).
+Batching strategy:
+  - update_student_status() (called by every job) only RPUSHes the row onto a
+    Redis list — no Sheets call inside the job. Calling the Sheet per job, from
+    many workers at once, made every call hang until the 60s timeout.
+  - flush_status_buffer() drains that list in batch: one read of the Student ID
+    column, one batchUpdate for students that already have a row (update in
+    place, no duplicates) and one append for new ones.
+  - run_status_flush_loop() runs in a side process of every worker (see
+    worker.py); a Redis lock makes sure only one replica flushes at a time.
+  - Exponential backoff + jitter on every Sheets API call (handles quota errors).
 
 Required env var:
   SHEETS_STATUS_ID        — the spreadsheet ID to write to
@@ -22,6 +27,9 @@ from datetime import datetime, timezone
 
 import google.auth
 import json
+import uuid
+import httplib2
+from google_auth_httplib2 import AuthorizedHttp
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -30,6 +38,11 @@ logger = logging.getLogger(__name__)
 
 SCOPES    = ["https://www.googleapis.com/auth/spreadsheets"]
 SHEET_TAB = "Status"
+
+STATUS_BUFFER         = "sheet_status_rows"
+STATUS_FLUSH_LOCK     = "sheet_status_flush_lock"
+STATUS_FLUSH_INTERVAL = int(os.environ.get("STATUS_FLUSH_INTERVAL", 60))
+SHEETS_HTTP_TIMEOUT   = 120
 
 HEADERS = [
     "Timestamp",            # A — when this run was processed
@@ -61,7 +74,8 @@ def get_sheets_service():
         creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
     else:
         creds, _ = google.auth.default(scopes=SCOPES)
-    return build("sheets", "v4", credentials=creds)
+    http = AuthorizedHttp(creds, http=httplib2.Http(timeout=SHEETS_HTTP_TIMEOUT))
+    return build("sheets", "v4", http=http, cache_discovery=False)
 
 
 def _with_backoff(fn, max_attempts: int = 6):
@@ -80,30 +94,8 @@ def _with_backoff(fn, max_attempts: int = 6):
                 raise
 
 
-def _ensure_headers(service, spreadsheet_id: str):
-    """Write headers on row 1 if the sheet is empty."""
-    result = _with_backoff(lambda: (
-        service.spreadsheets().values().get(
-            spreadsheetId=spreadsheet_id,
-            range=f"{SHEET_TAB}!A1:A1",
-        ).execute()
-    ))
-    if not result.get("values"):
-        _with_backoff(lambda: (
-            service.spreadsheets().values().update(
-                spreadsheetId=spreadsheet_id,
-                range=f"{SHEET_TAB}!A1",
-                valueInputOption="USER_ENTERED",
-                body={"values": [HEADERS]},
-            ).execute()
-        ))
-
-
-def _find_student_row(service, spreadsheet_id: str, student_id: str) -> int | None:
-    """
-    Returns the 1-based sheet row number if student_id already exists in col B,
-    or None if not found.
-    """
+def _read_student_ids(service, spreadsheet_id: str) -> list[str]:
+    """Column B (Student ID) top to bottom; index 0 is the header row."""
     result = _with_backoff(lambda: (
         service.spreadsheets().values().get(
             spreadsheetId=spreadsheet_id,
@@ -111,13 +103,8 @@ def _find_student_row(service, spreadsheet_id: str, student_id: str) -> int | No
             majorDimension="COLUMNS",
         ).execute()
     ))
-
-    col_values = result.get("values", [[]])[0]
-    for idx, cell in enumerate(col_values):
-        if str(cell).strip() == str(student_id).strip():
-            return idx + 1  # 1-based
-
-    return None
+    values = result.get("values") or [[]]
+    return [str(v).strip() for v in values[0]]
 
 
 def _build_row(
@@ -172,54 +159,122 @@ def update_student_status(
     error_msg: str = "",
 ):
     """
-    Upserts one status row for this student in the Google Sheet.
-    Safe to call from concurrent requests — duplicate rows won't accumulate.
+    Queues this student's status row for the Google Sheet (one Redis RPUSH).
+    flush_status_buffer() writes it within ~STATUS_FLUSH_INTERVAL seconds.
     """
-    spreadsheet_id = os.environ.get("SHEETS_STATUS_ID")
-    if not spreadsheet_id:
+    if not os.environ.get("SHEETS_STATUS_ID"):
         logger.warning("SHEETS_STATUS_ID not set, skipping sheet update")
         return
 
+    from app.queue import get_redis
+
     try:
-        service  = get_sheets_service()
-
-        _ensure_headers(service, spreadsheet_id)
-
         row_data = _build_row(
             student_id, student, status,
             drive_links or {}, input_json_link,
             email_sent, drive_uploaded, siteground_uploaded,
             error_msg,
         )
-
-        existing_row = _find_student_row(service, spreadsheet_id, student_id)
-
-        if existing_row:
-            range_notation = (
-                f"{SHEET_TAB}!A{existing_row}:{chr(64 + TOTAL_COLS)}{existing_row}"
-            )
-            logger.info(f"📊 Updating existing sheet row {existing_row} for {student_id}")
-            _with_backoff(lambda: (
-                service.spreadsheets().values().update(
-                    spreadsheetId=spreadsheet_id,
-                    range=range_notation,
-                    valueInputOption="USER_ENTERED",
-                    body={"values": [row_data]},
-                ).execute()
-            ))
-        else:
-            logger.info(f"📊 Appending new sheet row for {student_id}")
-            _with_backoff(lambda: (
-                service.spreadsheets().values().append(
-                    spreadsheetId=spreadsheet_id,
-                    range=f"{SHEET_TAB}!A1",
-                    valueInputOption="USER_ENTERED",
-                    insertDataOption="INSERT_ROWS",
-                    body={"values": [row_data]},
-                ).execute()
-            ))
-
-        logger.info(f"✅ Sheet updated: student={student_id} status={status}")
-
+        get_redis().rpush(
+            STATUS_BUFFER,
+            json.dumps({"student_id": str(student_id).strip(), "row": row_data}, ensure_ascii=False),
+        )
+        logger.info(f"📊 Sheet row queued: student={student_id} status={status}")
     except Exception:
-        logger.exception("⚠️ Failed to update status sheet (non-fatal)")
+        logger.exception("⚠️ Failed to queue status sheet row (non-fatal)")
+
+
+def flush_status_buffer(r) -> int:
+    """
+    Writes every queued status row to the sheet in batch. Returns rows written.
+    If the Sheets API fails, the rows stay in the processing list and the
+    next run retries them first.
+    """
+    spreadsheet_id = os.environ.get("SHEETS_STATUS_ID")
+    if not spreadsheet_id:
+        return 0
+
+    processing = f"{STATUS_BUFFER}:processing"
+    if not r.exists(processing):
+        if not r.exists(STATUS_BUFFER):
+            return 0
+        r.rename(STATUS_BUFFER, processing)  # atomic: new rows go to a fresh list
+
+    # Last row per student wins (an "error" followed by an "ok" keeps "ok").
+    latest: dict[str, list] = {}
+    for item in r.lrange(processing, 0, -1):
+        entry = json.loads(item)
+        latest[entry["student_id"]] = entry["row"]
+
+    service  = get_sheets_service()
+    existing = _read_student_ids(service, spreadsheet_id)
+
+    if not existing or not existing[0]:
+        _with_backoff(lambda: (
+            service.spreadsheets().values().update(
+                spreadsheetId=spreadsheet_id,
+                range=f"{SHEET_TAB}!A1",
+                valueInputOption="USER_ENTERED",
+                body={"values": [HEADERS]},
+            ).execute()
+        ))
+        existing = [HEADERS[1]]
+
+    row_of = {sid: idx + 1 for idx, sid in enumerate(existing) if idx > 0}  # 1-based
+    last_col = chr(64 + TOTAL_COLS)
+
+    updates = [
+        {"range": f"{SHEET_TAB}!A{row_of[sid]}:{last_col}{row_of[sid]}", "values": [row]}
+        for sid, row in latest.items() if sid in row_of
+    ]
+    new_rows = [row for sid, row in latest.items() if sid not in row_of]
+
+    if updates:
+        _with_backoff(lambda: (
+            service.spreadsheets().values().batchUpdate(
+                spreadsheetId=spreadsheet_id,
+                body={"valueInputOption": "USER_ENTERED", "data": updates},
+            ).execute()
+        ))
+    if new_rows:
+        _with_backoff(lambda: (
+            service.spreadsheets().values().append(
+                spreadsheetId=spreadsheet_id,
+                range=f"{SHEET_TAB}!A1",
+                valueInputOption="USER_ENTERED",
+                insertDataOption="INSERT_ROWS",
+                body={"values": new_rows},
+            ).execute()
+        ))
+
+    r.delete(processing)
+    logger.info(f"✅ Status sheet flushed: {len(updates)} updated, {len(new_rows)} appended")
+    return len(updates) + len(new_rows)
+
+
+def run_status_flush_loop():
+    """
+    Runs forever in a side process of each worker (see worker.py). Every
+    STATUS_FLUSH_INTERVAL seconds, whichever replica grabs the Redis lock
+    flushes the buffer; the others skip that round.
+    """
+    from redis import Redis
+    from app.queue import REDIS_URL
+
+    r = Redis.from_url(REDIS_URL, socket_connect_timeout=10, socket_timeout=30)
+    token = uuid.uuid4().hex
+    logger.info("📊 Status sheet flush loop started (every %ss)", STATUS_FLUSH_INTERVAL)
+
+    while True:
+        time.sleep(STATUS_FLUSH_INTERVAL)
+        try:
+            # Lock outlives a slow flush (HTTP timeout x backoff) with margin.
+            if not r.set(STATUS_FLUSH_LOCK, token, nx=True, ex=900):
+                continue
+            try:
+                flush_status_buffer(r)
+            finally:
+                if r.get(STATUS_FLUSH_LOCK) == token.encode():
+                    r.delete(STATUS_FLUSH_LOCK)
+        except Exception:
+            logger.exception("⚠️ Status sheet flush failed, retrying next round")
