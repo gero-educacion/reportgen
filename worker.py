@@ -10,8 +10,10 @@ RQ_WORKERS  cantidad de procesos worker en este contenedor (default 1).
 LOADTEST_MODE=1  load test: escucha SOLO la cola "loadtest", efectos externos
             mockeados y sin flush a la Sheet (ver app/loadtest.py).
 
-Además levanta un proceso aparte que vuelca a la Google Sheet de status las
-filas que los jobs dejan en Redis (ver sheets_updater.run_status_flush_loop).
+Además levanta un proceso aparte que vuelca a la tabla byw_reportgen_status
+las filas que los jobs dejan en Redis (ver status_db.run_status_db_flush_loop).
+DUAL WRITE (temporal): mientras SHEETS_STATUS_ID esté seteado, otro proceso
+las vuelca también a la Google Sheet (ver sheets_updater.run_status_flush_loop).
 """
 import logging
 import multiprocessing
@@ -40,10 +42,14 @@ def main():
         import app.tasks  # noqa: F401 — instala los mocks antes de arrancar
         queue_names = [LOADTEST_QUEUE]  # nunca las colas reales, aunque RQ_QUEUES diga otra cosa
     else:
-        from app.pipeline.sheets_updater import run_status_flush_loop
+        from app.pipeline.status_db import run_status_db_flush_loop
 
         # Antes de crear cualquier conexión: el proceso hijo arranca limpio.
-        multiprocessing.Process(target=run_status_flush_loop, name="status-flush", daemon=True).start()
+        multiprocessing.Process(target=run_status_db_flush_loop, name="status-db-flush", daemon=True).start()
+        # DUAL WRITE — borrar junto con sheets_updater.py
+        if os.environ.get("SHEETS_STATUS_ID"):
+            from app.pipeline.sheets_updater import run_status_flush_loop
+            multiprocessing.Process(target=run_status_flush_loop, name="status-flush", daemon=True).start()
         queue_names = QUEUES
 
     conn = Redis.from_url(REDIS_URL)

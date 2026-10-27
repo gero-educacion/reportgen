@@ -3,10 +3,14 @@ sheets_updater.py
 -----------------
 Writes one status row per student to a Google Sheet.
 
+TEMPORARY (dual write): rows are built and queued by
+status_db.update_student_status(), which also pushes them here while
+SHEETS_STATUS_ID is set. Delete this file once the sheet is retired.
+
 Batching strategy:
-  - update_student_status() (called by every job) only RPUSHes the row onto a
-    Redis list — no Sheets call inside the job. Calling the Sheet per job, from
-    many workers at once, made every call hang until the 60s timeout.
+  - status_db.update_student_status() (called by every job) only RPUSHes the
+    row onto a Redis list — no Sheets call inside the job. Calling the
+    Sheet per job, from many workers at once, made every call hang until the 60s timeout.
   - flush_status_buffer() drains that list in batch: one read of the Student ID
     column, one batchUpdate for students that already have a row (update in
     place, no duplicates) and one append for new ones.
@@ -23,7 +27,6 @@ import os
 import time
 import random
 import logging
-from datetime import datetime, timezone
 
 import google.auth
 import json
@@ -34,6 +37,8 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+from app.pipeline.status_db import HEADERS, TOTAL_COLS
+
 logger = logging.getLogger(__name__)
 
 SCOPES    = ["https://www.googleapis.com/auth/spreadsheets"]
@@ -43,29 +48,6 @@ STATUS_BUFFER         = "sheet_status_rows"
 STATUS_FLUSH_LOCK     = "sheet_status_flush_lock"
 STATUS_FLUSH_INTERVAL = int(os.environ.get("STATUS_FLUSH_INTERVAL", 60))
 SHEETS_HTTP_TIMEOUT   = 120
-
-HEADERS = [
-    "Timestamp",            # A — when this run was processed
-    "Student ID",           # B
-    "Nombre",               # C
-    "Email",                # D
-    "Rol",                  # E
-    "Status",               # F — ok | error | resent | recomputed
-    "Link Estudiante",      # G
-    "Link Padres",          # H
-    "Link CCR",             # I
-    "Link Input JSON",      # J
-    "Email enviado?",       # K
-    "Drive upload?",        # L
-    "SiteGround upload?",   # M
-    "Error",                # N
-    "Legacy Links (JSON)",   # ← new, appended at the end
-]
-TOTAL_COLS = len(HEADERS)
-
-
-LEGACY_EXCLUDE = {"estudiante", "padres", "ccr_rojo", "ccr_amarillo", "ccr_verde"}
-
 
 def get_sheets_service():
     creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON")
@@ -105,83 +87,6 @@ def _read_student_ids(service, spreadsheet_id: str) -> list[str]:
     ))
     values = result.get("values") or [[]]
     return [str(v).strip() for v in values[0]]
-
-
-def _build_row(
-    student_id: str,
-    student: dict,
-    status: str,
-    drive_links: dict,
-    input_json_link: str,
-    email_sent: str,
-    drive_uploaded: str,
-    siteground_uploaded: str,
-    error_msg: str,
-) -> list:
-    now   = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    name  = (student.get("Nombre y Apellido") or student.get("nombre_estudiante"))
-    email = student.get("Email") or student.get("email", "")
-    rol   = student.get("Rol", "")
-    links = drive_links or {}
-
-    legacy_links = {k: v for k, v in links.items() if k not in LEGACY_EXCLUDE}
-    legacy_json  = json.dumps(legacy_links, ensure_ascii=False) if legacy_links else ""
-
-    return [
-        now,
-        student_id,
-        name,
-        email,
-        rol,
-        status,
-        links.get("estudiante", ""),
-        links.get("padres", ""),
-        links.get("ccr_rojo") or links.get("ccr_amarillo") or links.get("ccr_verde", ""),
-        input_json_link or "",
-        email_sent,
-        drive_uploaded,
-        siteground_uploaded,
-        error_msg or "",
-        legacy_json,   # ← appended at the end, matches HEADERS
-
-    ]
-
-
-def update_student_status(
-    student_id: str,
-    student: dict,
-    status: str,
-    email_sent: str = "no",
-    drive_uploaded: str = "no",
-    siteground_uploaded: str = "no",
-    drive_links: dict | None = None,
-    input_json_link: str = "",
-    error_msg: str = "",
-):
-    """
-    Queues this student's status row for the Google Sheet (one Redis RPUSH).
-    flush_status_buffer() writes it within ~STATUS_FLUSH_INTERVAL seconds.
-    """
-    if not os.environ.get("SHEETS_STATUS_ID"):
-        logger.warning("SHEETS_STATUS_ID not set, skipping sheet update")
-        return
-
-    from app.queue import get_redis
-
-    try:
-        row_data = _build_row(
-            student_id, student, status,
-            drive_links or {}, input_json_link,
-            email_sent, drive_uploaded, siteground_uploaded,
-            error_msg,
-        )
-        get_redis().rpush(
-            STATUS_BUFFER,
-            json.dumps({"student_id": str(student_id).strip(), "row": row_data}, ensure_ascii=False),
-        )
-        logger.info(f"📊 Sheet row queued: student={student_id} status={status}")
-    except Exception:
-        logger.exception("⚠️ Failed to queue status sheet row (non-fatal)")
 
 
 def flush_status_buffer(r) -> int:

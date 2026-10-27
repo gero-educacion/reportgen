@@ -12,7 +12,7 @@ from app.pipeline.email_sender import send_report_email
 from app.pipeline.drive_uploader import upload_pdf_to_drive, upsert_json_to_drive, get_drive_service
 from app.pipeline.drive_downloader import download_drive_file
 from app.pipeline.siteground_sender import send_report_to_siteground, upload_pdf_to_siteground
-from app.pipeline.sheets_updater import update_student_status
+from app.pipeline.status_db import update_student_status
 from app.pipeline.student_historic import get_all_links, upsert_student
 from app.pipeline.db_writer import write_majors_to_db, post_utp_payload, alter_table_reports
 from app.pipeline.historic_db_writer import upsert_historico
