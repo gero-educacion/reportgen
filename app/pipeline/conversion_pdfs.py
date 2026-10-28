@@ -1,6 +1,7 @@
 from pathlib import Path
 import os
 import time
+import random
 import logging
 import requests
 
@@ -8,7 +9,13 @@ logger = logging.getLogger(__name__)
 
 GOTENBERG_URL = os.environ.get("GOTENBERG_URL", "http://gotenberg:3000")
 CONVERSION_TIMEOUT = int(os.environ.get("LO_TIMEOUT", 120))
-CONVERSION_ATTEMPTS = 3
+CONVERSION_ATTEMPTS = int(os.environ.get("GOTENBERG_ATTEMPTS", 6))
+BACKOFF_CAP = 30  # segundos
+
+
+def _is_retryable(status_code: int) -> bool:
+    # 429: cola interna de Gotenberg llena. 5xx: timeout de cola o LibreOffice caído.
+    return status_code == 429 or status_code >= 500
 
 
 def convert_to_pdf(pptx_path: Path, pdf_path: Path) -> Path:
@@ -17,9 +24,9 @@ def convert_to_pdf(pptx_path: Path, pdf_path: Path) -> Path:
 
     logger.info("🖨️  Sending to Gotenberg: %s", pptx_path.name)
 
-    # Bajo carga Gotenberg a veces devuelve 503 (su cola interna superó el
-    # API timeout) o 500 (se cayó LibreOffice y lo reinicia). Reintentar solo
-    # la conversión es mucho más barato que fallar el job entero.
+    # Bajo carga Gotenberg a veces devuelve 429 (cola interna llena), 503 (la
+    # cola superó el API timeout) o 500 (se cayó LibreOffice y lo reinicia).
+    # Reintentar solo la conversión es mucho más barato que fallar el job entero.
     for attempt in range(CONVERSION_ATTEMPTS):
         with open(pptx_path, "rb") as f:
             response = requests.post(
@@ -33,13 +40,15 @@ def convert_to_pdf(pptx_path: Path, pdf_path: Path) -> Path:
                 },
                 timeout=CONVERSION_TIMEOUT,
             )
-        if response.status_code < 500 or attempt == CONVERSION_ATTEMPTS - 1:
+        if not _is_retryable(response.status_code) or attempt == CONVERSION_ATTEMPTS - 1:
             break
+        # Backoff exponencial con jitter: que los workers no reintenten todos a la vez.
+        delay = min(BACKOFF_CAP, 2 ** (attempt + 1)) * random.uniform(0.5, 1.0)
         logger.warning(
-            "⚠️  Gotenberg HTTP %s for %s, retrying (%d/%d)",
-            response.status_code, pptx_path.name, attempt + 1, CONVERSION_ATTEMPTS - 1,
+            "⚠️  Gotenberg HTTP %s for %s, retrying in %.1fs (%d/%d)",
+            response.status_code, pptx_path.name, delay, attempt + 1, CONVERSION_ATTEMPTS - 1,
         )
-        time.sleep(2 * (attempt + 1))
+        time.sleep(delay)
 
     if response.status_code != 200:
         raise RuntimeError(
