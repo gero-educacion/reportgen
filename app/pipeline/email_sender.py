@@ -308,7 +308,7 @@ def _send_utp_email(cedula: str, reporte_url: str) -> tuple[str, str | None] | N
     return to_email, new_sg_message_id
 
 
-def send_utp_student_email(cedula: str, reporte_url: str) -> None:
+def send_utp_student_email(cedula: str, reporte_url: str, token: str | None = None) -> None:
     """
     Sends the UTP student report email.
 
@@ -327,5 +327,5 @@ def send_utp_student_email(cedula: str, reporte_url: str) -> None:
         return
     _, new_sg_message_id = result
     if new_sg_message_id:
-        write_sg_message_id(user_email=cedula, sg_message_id=new_sg_message_id)
+        write_sg_message_id(user_email=cedula, sg_message_id=new_sg_message_id, token=token)
 

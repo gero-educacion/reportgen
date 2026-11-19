@@ -204,15 +204,17 @@ def process_report_job(job: dict):
                 post_utp_payload(student_id, user_email, job, sg_file_links)
             except Exception:
                 logger.exception("⚠️  post_utp_payload failed (non-fatal)")
+            # For UTP jobs student_id == the tracking row's token: every write
+            # below targets this job's own row, not "the lead's latest row".
             try:
-                alter_table_reports(user_email=user_email, links=sg_file_links)
+                alter_table_reports(user_email=user_email, links=sg_file_links, token=student_id)
             except Exception:
                 logger.exception("⚠️  alter_table_reports failed (non-fatal)")
             try:
                 from app.pipeline.email_sender import send_utp_student_email
                 reporte_url = sg_file_links.get("estudiante", "")
                 if reporte_url:
-                    send_utp_student_email(cedula=user_email, reporte_url=reporte_url)
+                    send_utp_student_email(cedula=user_email, reporte_url=reporte_url, token=student_id)
             except Exception:
                 logger.exception("⚠️  send_utp_student_email failed (non-fatal)")
 

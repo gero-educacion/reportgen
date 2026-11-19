@@ -58,51 +58,80 @@ logger = logging.getLogger(__name__)
 #         logger.exception("⚠️  Failed to look up lead_id for %s", email)
 #         return None
 
-def _write_validation_id(email: str, validation_id: str):
+def _update_tracking_row(set_sql: str, set_params: tuple, token: str | None, email: str | None) -> str:
     """
-    Writes the validationId returned by the UTP endpoint into
-    byw_tracking_algoritmo_AC, updating the most recent row for this email.
+    Applies `SET <set_sql>` to the job's own row in byw_tracking_algoritmo_AC.
+
+    For UTP jobs the job's student_id IS the tracking token, so the row is
+    matched by `token` (+ client='UTP'). Matching by "the lead's most recent
+    row" stamps the wrong copy when a lead has duplicate submissions.
+
+    Falls back to the email match only when NO row has that token. (MySQL's
+    rowcount counts changed rows, not matched ones, so 0 can also mean the
+    token row already held these values — that must not fall back.)
+
+    Returns "token", "email" or "none" (which match was used). Raises on DB error.
     """
-    sql = """
-        UPDATE byw_tracking_algoritmo_AC
-        SET    validationId = %s
-        WHERE  email = %s
-        ORDER  BY response_at DESC
-        LIMIT  1
+    with db_cursor() as cur:
+        if token:
+            cur.execute(
+                f"UPDATE byw_tracking_algoritmo_AC SET {set_sql} WHERE token = %s AND client = 'UTP'",
+                (*set_params, token),
+            )
+            if cur.rowcount > 0:
+                return "token"
+            cur.execute(
+                "SELECT 1 FROM byw_tracking_algoritmo_AC WHERE token = %s AND client = 'UTP' LIMIT 1",
+                (token,),
+            )
+            if cur.fetchone():
+                return "token"  # row exists, values were already set
+            logger.warning("No tracking row with token=%s — falling back to email=%s", token, email)
+        if not email:
+            return "none"
+        cur.execute(
+            f"UPDATE byw_tracking_algoritmo_AC SET {set_sql} WHERE email = %s ORDER BY response_at DESC LIMIT 1",
+            (*set_params, email),
+        )
+        return "email" if cur.rowcount > 0 else "none"
+
+
+def _write_validation_id(email: str, validation_id: str, token: str | None = None):
+    """
+    Writes the validationId returned by the UTP endpoint into the job's row
+    of byw_tracking_algoritmo_AC (by token; email only as fallback).
     """
     try:
-        with db_cursor() as cur:
-            cur.execute(sql, (validation_id, email))
-        logger.info("✅ validationId=%s written to byw_tracking_algoritmo_AC for %s", validation_id, email)
-    except Exception as e:
-        logger.exception("⚠️  Failed to write validationId for %s (non-fatal)", email)
+        matched = _update_tracking_row("validationId = %s", (validation_id,), token, email)
+        if matched == "none":
+            logger.error("UTP_VALIDATION_ID_NOT_WRITTEN token=%s lead=%s validationId=%s (no row)",
+                         token, email, validation_id)
+        else:
+            logger.info("✅ validationId=%s written (by %s) token=%s lead=%s", validation_id, matched, token, email)
+    except Exception:
+        # UTP already has this lead: log the id so it can be written by hand.
+        logger.exception("UTP_VALIDATION_ID_NOT_WRITTEN token=%s lead=%s validationId=%s (DB error)",
+                         token, email, validation_id)
 
-def alter_table_reports(user_email: str, links: dict):
+def alter_table_reports(user_email: str, links: dict, token: str | None = None):
     """
-    Updates reporte_estudiante and reporte_padres in byw_tracking_algoritmo_AC
-    for the most recent row matching this email.
-    """
-    sql = """
-        UPDATE byw_tracking_algoritmo_AC
-        SET    reporte_estudiante = %s,
-               reporte_padres     = %s
-        WHERE  email = %s
-        ORDER  BY response_at DESC
-        LIMIT  1
+    Updates reporte_estudiante and reporte_padres on the job's row of
+    byw_tracking_algoritmo_AC (by token; email only as fallback).
     """
     reporte_estudiante = links.get("estudiante", "")
     reporte_padres     = links.get("padres", "")
 
     try:
-        with db_cursor() as cur:
-            cur.execute(sql, (reporte_estudiante, reporte_padres, user_email))
-            rows_affected = cur.rowcount
-        if rows_affected == 0:
-            logger.warning("alter_table_reports: no row found for email=%s", user_email)
+        matched = _update_tracking_row(
+            "reporte_estudiante = %s, reporte_padres = %s",
+            (reporte_estudiante, reporte_padres), token, user_email,
+        )
+        if matched == "none":
+            logger.warning("alter_table_reports: no row found for token=%s email=%s", token, user_email)
         else:
-            logger.info("✅ Links written to byw_tracking_algoritmo_AC for %s", user_email)
-    except Exception as e:
-        logger.exception("⚠️  Failed to write links for %s (non-fatal)", user_email)
+            logger.info("✅ Links written (by %s) token=%s lead=%s", matched, token, user_email)
+    except Exception:
+        logger.exception("⚠️  Failed to write links for token=%s email=%s (non-fatal)", token, user_email)
 
 # ---------------------------------------------------------------------------
 # write_majors_to_db
@@ -161,9 +190,11 @@ def post_utp_payload(
     report_links: dict,     # {"estudiante": "https://...", "padres": "https://..."}
 ):
     """
-    1. Looks up lead_id from byw_tracking_algoritmo_AC by email.
-    2. POSTs leadId + career1 + career2 + resultsLink to UTP CRM endpoint.
-    3. Captures validationId from the response and writes it back to the table.
+    1. POSTs leadId + careers + report links to the UTP CRM endpoint, retrying
+       transient failures (see _post_utp_with_retry).
+    2. Writes the returned validationId onto this job's row (token = student_id).
+    Never raises. Returns an outcome string ("ok", "timeout", "rejected_409", ...);
+    final failures are logged as "UTP_POST_FAILED token=... lead=...".
     """
     endpoint = os.environ.get("UTP_ENDPOINT_URL", "").strip().strip('"')
     if not endpoint:
@@ -204,61 +235,106 @@ def post_utp_payload(
         endpoint, user_email, payload["career1"], payload["career2"], payload["resultsLink"], payload["resultsLinkParent"],
     )
  
+    # Never raises: tasks.py treats this as non-fatal. An exception would make
+    # RQ retry the whole job, which re-runs the pipeline and resends the email.
     try:
-        r = requests.post(endpoint, json=payload, headers=headers, timeout=20)
-        r.raise_for_status()
-        body = r.json()
-        logger.info("✅ UTP endpoint response: %s", body)
- 
+        body, outcome = _post_utp_with_retry(endpoint, payload, headers, student_id, user_email)
+        if body is None:
+            # Distinct, greppable line: these rows need recover_utp_validation_ids.py
+            logger.error("UTP_POST_FAILED token=%s lead=%s outcome=%s", student_id, user_email, outcome)
+            return outcome
+
         if not body.get("success"):
-            logger.warning("⚠️  UTP endpoint returned success=false: %s", body)
- 
-        # Capture validationId and persist to byw_tracking_algoritmo_AC
+            logger.warning("⚠️  UTP endpoint returned success=false token=%s lead=%s: %s",
+                           student_id, user_email, body)
+
+        # Capture validationId and persist it on THIS job's row
         validation_id = body.get("validationId") or body.get("validation_id") or body.get("id")
         if validation_id:
             logger.info("🔖 validationId received: %s", validation_id)
-            if user_email:
-                _write_validation_id(user_email, str(validation_id))
-        else:
-            logger.warning("⚠️ No validationId in UTP response: %s", body)
- 
-    except Exception as e:
+            _write_validation_id(user_email, str(validation_id), token=student_id)
+            return "ok"
+        logger.error("UTP_POST_FAILED token=%s lead=%s outcome=no_validation_id body=%s",
+                     student_id, user_email, body)
+        return "no_validation_id"
+    except Exception:
+        logger.exception("UTP_POST_FAILED token=%s lead=%s outcome=unexpected_error", student_id, user_email)
+        return "unexpected_error"
+
+
+# Waits before each retry. 3 attempts in total; worst case with the 20s
+# request timeout is ~67s, well under the RQ job timeout (600s).
+UTP_RETRY_DELAYS = (2, 5)
+UTP_REQUEST_TIMEOUT = 20
+
+
+def _post_utp_with_retry(endpoint: str, payload: dict, headers: dict, token, lead):
+    """
+    POSTs to UTP, retrying on timeout / connection error / 5xx / 429.
+    4xx (other than 429) means UTP rejected it (bad payload, lead already
+    confirmed...) and is NOT retried. Returns (json_body, outcome); body is
+    None when every attempt failed.
+    """
+    import time
+
+    attempts = len(UTP_RETRY_DELAYS) + 1
+    outcome = "unknown"
+    for attempt in range(1, attempts + 1):
         try:
-            logger.error("⚠️  UTP response body: %s", r.text)
-        except Exception:
-            pass
-        logger.exception("⚠️  UTP endpoint post failed (non-fatal)")
+            r = requests.post(endpoint, json=payload, headers=headers, timeout=UTP_REQUEST_TIMEOUT)
+        except requests.Timeout:
+            # Ambiguous: UTP may have saved it and just answered late.
+            outcome = "timeout"
+            logger.warning("⏱️  UTP POST timeout (ambiguous: UTP may have saved it) token=%s lead=%s attempt=%d/%d",
+                           token, lead, attempt, attempts)
+        except requests.RequestException as e:
+            outcome = "connection_error"
+            logger.warning("⚠️  UTP POST error token=%s lead=%s attempt=%d/%d: %s",
+                           token, lead, attempt, attempts, e)
+        else:
+            if r.ok:
+                try:
+                    body = r.json()
+                except ValueError:
+                    logger.error("⚠️  UTP returned non-JSON (HTTP %s) token=%s lead=%s body=%s",
+                                 r.status_code, token, lead, r.text[:2000])
+                    return None, "bad_response"
+                logger.info("✅ UTP endpoint response (attempt %d): %s", attempt, body)
+                return body, "ok"
+            if r.status_code != 429 and r.status_code < 500:
+                logger.error("❌ UTP rejected the POST (HTTP %s, not retried) token=%s lead=%s body=%s",
+                             r.status_code, token, lead, r.text[:2000])
+                return None, f"rejected_{r.status_code}"
+            outcome = f"http_{r.status_code}"
+            logger.warning("⚠️  UTP POST HTTP %s token=%s lead=%s attempt=%d/%d body=%s",
+                           r.status_code, token, lead, attempt, attempts, r.text[:2000])
+
+        if attempt < attempts:
+            time.sleep(UTP_RETRY_DELAYS[attempt - 1])
+
+    return None, outcome
 
 
-def write_sg_message_id(user_email: str, sg_message_id: str):
+def write_sg_message_id(user_email: str, sg_message_id: str, token: str | None = None):
     """
     Called by reportgen right after sending the UTP student email.
-    Stamps sg_message_id + initial email_status="Enviado" onto the most
-    recent row for this email. This is the ONLY write that matches by email —
-    everything after this matches by sg_message_id instead, to avoid stamping
-    the wrong row if the student gets reprocessed later.
+    Stamps sg_message_id + initial email_status="Enviado" onto the job's row
+    (by token; email only as fallback). Everything after this matches by
+    sg_message_id.
     """
     from datetime import date
 
-    sql = """
-        UPDATE byw_tracking_algoritmo_AC
-        SET    sg_message_id = %s,
-               email_status = %s,
-               email_status_updated_at = %s
-        WHERE  email = %s
-        ORDER  BY response_at DESC
-        LIMIT  1
-    """
     try:
-        with db_cursor() as cur:
-            cur.execute(sql, (sg_message_id, "Enviado", date.today(), user_email))
-            rows_affected = cur.rowcount
-        if rows_affected == 0:
-            logger.warning("write_sg_message_id: no row found for email=%s", user_email)
+        matched = _update_tracking_row(
+            "sg_message_id = %s, email_status = %s, email_status_updated_at = %s",
+            (sg_message_id, "Enviado", date.today()), token, user_email,
+        )
+        if matched == "none":
+            logger.warning("write_sg_message_id: no row found for token=%s email=%s", token, user_email)
         else:
-            logger.info("✅ sg_message_id=%s written for %s", sg_message_id, user_email)
+            logger.info("✅ sg_message_id=%s written (by %s) token=%s lead=%s", sg_message_id, matched, token, user_email)
     except Exception:
-        logger.exception("⚠️  Failed to write sg_message_id for %s (non-fatal)", user_email)
+        logger.exception("⚠️  Failed to write sg_message_id for token=%s email=%s (non-fatal)", token, user_email)
 
 
 # Rank covers both raw webhook event names and Activity API status
