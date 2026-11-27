@@ -61,7 +61,6 @@ except ImportError:
     pass
 
 from app.pipeline.db import db_cursor  # noqa: E402
-from app.pipeline.db_writer import utp_student_details  # noqa: E402
 
 TABLE = "byw_tracking_algoritmo_AC"
 
@@ -138,7 +137,8 @@ def candidates(lead_id: str, rows: list[dict]) -> list[tuple[str, dict]]:
             "career2":           "",
             "resultsLink":       est,
             "resultsLinkParent": pad,
-            **utp_student_details(lead_id, job),
+            "telephone":         job.get("Telefono") or "",
+            "email":             job.get("Email_formulario") or "",
         }
         key = json.dumps(payload, sort_keys=True)
         if key not in seen:
