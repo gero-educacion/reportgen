@@ -132,7 +132,7 @@ def candidates(lead_id: str, rows: list[dict]) -> list[tuple[str, dict]]:
         est = relink(tmpl["reporte_estudiante"], r["token"]) or (r["reporte_estudiante"] or "")
         pad = relink(tmpl["reporte_padres"] or "", r["token"]) or (r["reporte_padres"] or "")
         payload = {  # same shape as db_writer.post_utp_payload
-            "leadId":            lead_id,
+            "leadId":            (job.get("utp_lead_id") or "").strip() or lead_id,
             "career1":           job.get("CARRERA_01") or job.get("Carrera 01") or (r["carrera_1"] or "").upper(),
             "career2":           "",
             "resultsLink":       est,

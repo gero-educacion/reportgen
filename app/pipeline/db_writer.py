@@ -215,8 +215,12 @@ def post_utp_payload(
     telefono = student.get("Telefono") or ""
     email = student.get("Email_formulario") or ""
  
+    # UTP's own lead ID when their receiver already returned it (self-login
+    # students, set by the algoritmo); otherwise the geroId / Lead ID as before.
+    lead_id = (student.get("utp_lead_id") or "").strip() or user_email
+
     payload = {
-        "leadId":      user_email,
+        "leadId":      lead_id,
         "career1":     c1,
         "career2":     "",
         "resultsLink":       report_links.get("estudiante", ""),
@@ -231,8 +235,8 @@ def post_utp_payload(
     }
  
     logger.info(
-        "📨 Posting UTP payload | endpoint=%s | leadId=%s | career1=%s | career2=%s | resultsLink=%s | resultsLinkParent=%s",
-        endpoint, user_email, payload["career1"], payload["career2"], payload["resultsLink"], payload["resultsLinkParent"],
+        "📨 Posting UTP payload | endpoint=%s | leadId=%s | geroId=%s | career1=%s | career2=%s | resultsLink=%s | resultsLinkParent=%s",
+        endpoint, lead_id, user_email, payload["career1"], payload["career2"], payload["resultsLink"], payload["resultsLinkParent"],
     )
  
     # Never raises: tasks.py treats this as non-fatal. An exception would make
