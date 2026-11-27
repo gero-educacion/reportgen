@@ -6,13 +6,18 @@ db_writer.py
                            POSTs to UTP CRM endpoint with careers + report links,
                            then writes the returned validationId back to that same table.
 
-UTP endpoint payload shape:
+UTP endpoint payload shape (UTP set no schema: descriptive keys, "" when unknown):
   {
-    "leadId":            "<lead_id from byw_tracking_algoritmo_AC>",
+    "leadId":            "<Lead ID, or the id_acceso of a self-login student>",
     "career1":           "<Carrera 1>",
-    "career2":           "<Carrera 2>",
+    "career2":           "",
     "resultsLink":       "<SiteGround public URL — estudiante report>",
-    "resultsLinkPadres": "<SiteGround public URL — padres report>"
+    "resultsLinkParent": "<SiteGround public URL — padres report>",
+    + utp_student_details(): accessType ("school_code" | "lead_id"),
+      studentFirstNames, studentLastNames, studentPaternalSurname,
+      studentMaternalSurname, email, telephone, schoolCode, schoolName,
+      shift (Mañana | Tarde | Noche), parentFullName, parentEmail,
+      parentPhone, promoterEmail
   }
 
 Required env vars (MySQL):
@@ -180,6 +185,119 @@ def write_majors_to_db(student: dict):
 
 
 # ---------------------------------------------------------------------------
+# utp_student_details — student / school / parent / promoter data for UTP
+# ---------------------------------------------------------------------------
+
+UTP_CLIENTE = "Universidad Tecnológica de Perú"
+
+
+def _txt(v) -> str:
+    return str(v).strip() if v is not None else ""
+
+
+def _codigo_norm(v) -> str:
+    """Código modular as the panel stores it: digits only, no leading zeros."""
+    return "".join(ch for ch in _txt(v) if ch.isdigit()).lstrip("0")
+
+
+def utp_student_details(lead_id: str, student: dict | None = None) -> dict:
+    """
+    Everything we know about the student for the UTP CRM, keyed by leadId:
+      - self-login students (leadId = id_acceso): what they typed on the
+        student page (byw_utp_cupos) + the aplicación they logged in with
+        (byw_utp_aplicaciones);
+      - Lead ID students: UTP's own row in byw_usuarios_habilitados.
+    promoterEmail / schoolName: the student's aplicación, else the latest
+    aplicación of their school that has one. telephone / email: the student
+    page first, the Typeform answers (Telefono / Email_formulario) as fallback.
+    Missing values are "". Never raises: on a DB error it returns the
+    Typeform-only values, so the POST still goes out.
+    """
+    student = student or {}
+    out = {
+        "accessType":             "lead_id",   # "school_code" for the self-login flow
+        "studentFirstNames":      "",
+        "studentLastNames":       "",
+        "studentPaternalSurname": "",
+        "studentMaternalSurname": "",
+        "email":                  _txt(student.get("Email_formulario")),
+        "telephone":              _txt(student.get("Telefono")),
+        "schoolCode":             "",
+        "schoolName":             "",
+        "shift":                  "",          # Mañana | Tarde | Noche
+        "parentFullName":         "",
+        "parentEmail":            "",
+        "parentPhone":            "",
+        "promoterEmail":          "",
+    }
+    if not lead_id:
+        return out
+    try:
+        with db_cursor() as cur:
+            cur.execute("""
+                SELECT c.nombres, c.apellido_paterno, c.apellido_materno, c.email, c.telefono, c.turno,
+                       TRIM(CONCAT_WS(' ', c.apoderado_nombre, c.apoderado_apellido)) AS apoderado,
+                       c.apoderado_email, c.apoderado_telefono,
+                       a.codigo_modular, a.colegio, a.promotor
+                  FROM byw_utp_cupos c
+                  LEFT JOIN byw_utp_aplicaciones a ON a.id = c.aplicacion_id
+                 WHERE c.id_acceso = %s
+                 LIMIT 1
+            """, (lead_id,))
+            cupo = cur.fetchone()
+
+            if cupo:
+                paterno, materno = _txt(cupo["apellido_paterno"]), _txt(cupo["apellido_materno"])
+                out.update({
+                    "accessType":             "school_code",
+                    "studentFirstNames":      _txt(cupo["nombres"]),
+                    "studentLastNames":       " ".join(p for p in (paterno, materno) if p),
+                    "studentPaternalSurname": paterno,
+                    "studentMaternalSurname": materno,
+                    "email":                  _txt(cupo["email"]) or out["email"],
+                    "telephone":              _txt(cupo["telefono"]) or out["telephone"],
+                    "schoolCode":             _txt(cupo["codigo_modular"]),
+                    "schoolName":             _txt(cupo["colegio"]),
+                    "shift":                  _txt(cupo["turno"]),
+                    "parentFullName":         _txt(cupo["apoderado"]),
+                    "parentEmail":            _txt(cupo["apoderado_email"]),
+                    "parentPhone":            _txt(cupo["apoderado_telefono"]),
+                    "promoterEmail":          _txt(cupo["promotor"]),
+                })
+            else:
+                cur.execute("""
+                    SELECT nombre, apellido, escuela
+                      FROM byw_usuarios_habilitados
+                     WHERE legajo = %s AND cliente = %s
+                     LIMIT 1
+                """, (lead_id, UTP_CLIENTE))
+                buh = cur.fetchone()
+                if buh:
+                    out.update({
+                        "studentFirstNames": _txt(buh["nombre"]),
+                        "studentLastNames":  _txt(buh["apellido"]),
+                        "schoolCode":        _txt(buh["escuela"]),
+                    })
+
+            codigo = _codigo_norm(out["schoolCode"])
+            if codigo and not (out["schoolName"] and out["promoterEmail"]):
+                cur.execute("""
+                    SELECT colegio, promotor
+                      FROM byw_utp_aplicaciones
+                     WHERE codigo_modular = %s
+                     ORDER BY CHAR_LENGTH(TRIM(COALESCE(promotor, ''))) > 0 DESC, inicio DESC, id DESC
+                     LIMIT 1
+                """, (codigo,))
+                app = cur.fetchone()
+                if app:
+                    out["schoolName"]    = out["schoolName"] or _txt(app["colegio"])
+                    out["promoterEmail"] = out["promoterEmail"] or _txt(app["promotor"])
+    except Exception:
+        logger.exception("⚠️  utp_student_details failed for lead=%s — sending Typeform-only data", lead_id)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # post_utp_payload
 # ---------------------------------------------------------------------------
 
@@ -212,17 +330,14 @@ def post_utp_payload(
     #     lead_id = user_email
 
     c1 = (student.get("CARRERA_01") or student.get("Carrera 01"))
-    telefono = student.get("Telefono") or ""
-    email = student.get("Email_formulario") or ""
- 
+
     payload = {
         "leadId":      user_email,
         "career1":     c1,
         "career2":     "",
         "resultsLink":       report_links.get("estudiante", ""),
         "resultsLinkParent": report_links.get("padres", ""),
-        "telephone": telefono,
-        "email": email
+        **utp_student_details(user_email, student),
     }
  
     headers = {
@@ -231,8 +346,9 @@ def post_utp_payload(
     }
  
     logger.info(
-        "📨 Posting UTP payload | endpoint=%s | leadId=%s | career1=%s | career2=%s | resultsLink=%s | resultsLinkParent=%s",
-        endpoint, user_email, payload["career1"], payload["career2"], payload["resultsLink"], payload["resultsLinkParent"],
+        "📨 Posting UTP payload | endpoint=%s | leadId=%s | accessType=%s | schoolCode=%s | career1=%s | resultsLink=%s | resultsLinkParent=%s",
+        endpoint, user_email, payload["accessType"], payload["schoolCode"], payload["career1"],
+        payload["resultsLink"], payload["resultsLinkParent"],
     )
  
     # Never raises: tasks.py treats this as non-fatal. An exception would make
